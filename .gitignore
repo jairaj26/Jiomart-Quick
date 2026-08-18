@@ -1,0 +1,25 @@
+# Secrets and Local Environment
+.env
+*.local
+
+# Python cache & build
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+
+# Local data / debug dumps
+*.csv
+*.json
+!package.json
+!tsconfig.json
+scratch/
+debug/
+
+# OS Specific
+.DS_Store
+Thumbs.db

@@ -1,0 +1,49 @@
+name: JioMart Daily Deals Telegram Alert
+
+on:
+  schedule:
+    # Runs at 18:35 UTC every day = 00:05 AM IST (midnight alert)
+    - cron: '35 18 * * *'
+  workflow_dispatch: # Allows manual trigger from GitHub web interface anytime
+    inputs:
+      min_discount:
+        description: 'Minimum Discount %'
+        required: false
+        default: '60'
+      limit:
+        description: 'Maximum deals to send'
+        required: false
+        default: '20'
+      department:
+        description: 'Department (e.g. groceries, electronics, fashion)'
+        required: false
+        default: 'groceries'
+
+jobs:
+  broadcast-deals:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Fetch and Broadcast JioMart Deals to Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          JIOMART_PINCODE: ${{ secrets.JIOMART_PINCODE }}
+          MIN_DISCOUNT: ${{ github.event.inputs.min_discount || '60' }}
+          DEAL_LIMIT: ${{ github.event.inputs.limit || '20' }}
+          DEPARTMENT: ${{ github.event.inputs.department || 'groceries' }}
+        run: |
+          python telegram_notifier.py
