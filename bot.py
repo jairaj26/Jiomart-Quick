@@ -501,6 +501,36 @@ def scheduler_worker() -> None:
         time.sleep(30)
 
 
+# --- HTTP Health Check Server (For Free Render / Koyeb Web Services) ---
+
+def start_health_server() -> None:
+    """Starts a minimal HTTP server on PORT so cloud platforms can verify service health."""
+    port_str = os.environ.get("PORT")
+    if not port_str:
+        return
+
+    try:
+        from http.server import HTTPServer, BaseHTTPRequestHandler
+
+        class HealthHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain")
+                self.end_headers()
+                self.wfile.write(b"JioMart Telegram Bot is running healthy!\n")
+
+            def log_message(self, format, *args):
+                pass  # Suppress HTTP access logs to keep console clean
+
+        port = int(port_str)
+        server = HTTPServer(("0.0.0.0", port), HealthHandler)
+        print(f"{Colors.CYAN}🌐 Health-check server listening on port {port} for Free Web Service{Colors.RESET}")
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+    except Exception as e:
+        print(f"Health server warning: {e}")
+
+
 # --- Long Polling Listener ---
 
 def start_polling() -> None:
@@ -515,6 +545,9 @@ def start_polling() -> None:
     print(f"{Colors.GREEN}🤖 JioMart Deals Hunter Bot is Online!{Colors.RESET}")
     print(f"⏰ Scheduler Active (5x Daily: 12:05am, 6am, 12pm, 4pm, 8pm IST)")
     print(f"{Colors.GREEN}===================================================={Colors.RESET}\n")
+
+    # Start HTTP health check server for Render Free Web Service
+    start_health_server()
 
     # Start background scheduler thread
     sched_thread = threading.Thread(target=scheduler_worker, daemon=True)
@@ -536,3 +569,4 @@ def start_polling() -> None:
 
 if __name__ == "__main__":
     start_polling()
+
