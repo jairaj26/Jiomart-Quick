@@ -1,121 +1,107 @@
-# ⚡ JioMart Fast Ad-Free Deals & Daily Telegram Broadcaster
+# ⚡ JioMart Fast Ad-Free Deals & Interactive Multi-User Telegram Bot
 
-A high-performance, ad-free tool that queries JioMart's internal Vertex APIs directly. It fetches and sorts products by discount, resolves Quick Commerce delivery routing in real-time, and can **automatically broadcast top deals to Telegram every day at 12:05 AM IST via GitHub Actions (100% Free)**.
-
----
-
-## 🌟 Highlights
-
-- **Pure Ad-Free Speed**: Bypasses heavy ad networks (`ads.jiomartjcp.com`), analytics scripts (`stelios`, `cctz0.de`), and tracking bloat for instant data retrieval.
-- **Daily Automated Telegram Alerts**: Runs every midnight (12:05 AM IST) in the cloud via GitHub Actions and sends the top 20 discount deals to your personal Telegram or group/channel.
-- **Zero Hardcoded Data**: Fully configurable via environment variables, `.env` file, GitHub Secrets, or CLI arguments.
-- **Real-Time Logistics**: Automatically resolves Quick Commerce stores, polygon boundaries, and delivery status for any Indian PIN code.
-- **Accurate Stock & Pricing**: Real in-stock verification, actual MRP vs. discounted price calculations, and direct clickable product links (`https://www.jiomart.com/product/{slug}`).
-- **Rich Terminal UI & Exporting**: Colorized console table with savings summary, plus JSON and CSV exports.
+A high-performance, ad-free JioMart deal engine and interactive Telegram Bot. It queries JioMart's internal Vertex APIs directly, automatically resolves Quick Commerce delivery routing in real-time, supports **dynamic per-user location onboarding**, and uses a **smart deal-diffing engine** to eliminate permanent stale discounts.
 
 ---
 
-## 🚀 Quick Setup: Daily Telegram Alerts via GitHub Actions
+## 🌟 Key Features
 
-You can run this completely free in the cloud without leaving your computer on!
+1. **Dynamic Multi-User Location Onboarding**:
+   - Centralized bot: Any user can `/start` the bot and send their own 6-digit delivery PIN code (e.g. `560045` or `/pincode 400001`).
+   - Each user gets deals tailored **100% to their specific location**, without needing to create their own bot or manage API tokens.
 
-### Step 1: Create a Free Telegram Bot (1 minute)
+2. **Smart Deal Diffing & Deduplication (Zero Stale Spam)**:
+   - Tracks product price and discount history in SQLite (`jiomart_bot.db`).
+   - Automatically filters out permanent/fake 85% discount items (like generic chopping boards).
+   - Only triggers automated alerts when:
+     - 🆕 **New Deal**: A product crosses the discount threshold for the first time.
+     - 📉 **Price Drop**: The price drops further than previously seen (e.g. ₹99 → ₹69).
+     - 💥 **Discount Increased**: Significant discount percentage jump.
+     - 🔄 **Back in Stock**: High-discount item restocked.
+
+3. **5x Daily Scheduled Broadcasts (IST)**:
+   - Runs automatically at: **12:05 AM**, **6:00 AM**, **12:00 PM**, **4:00 PM**, and **8:00 PM** IST.
+   - **Unique Pincode Optimization**: Fetches JioMart's API **once per unique pincode**, calculates diffs, and broadcasts to all users subscribed to that location.
+
+4. **On-Demand Interactive Commands**:
+   - `/deals` — Fetch current top deals for your saved PIN code immediately.
+   - `/deals <pincode>` — Quick check deals for any other Indian PIN code.
+   - `/mindiscount <pct>` — Set custom discount filter (e.g. `/mindiscount 70`).
+   - `/settings` — View your active location and preferences.
+   - `/pause` / `/resume` — Mute or unmute scheduled alert notifications.
+
+---
+
+## 🚀 Quick Setup & Deployment
+
+### Step 1: Create Your Telegram Bot (1 minute)
 1. Open Telegram and search for **`@BotFather`**.
-2. Send `/newbot` and follow the prompts to choose a name and username for your bot.
-3. BotFather will give you a **HTTP API Token** (e.g. `7123456789:AAH...`). Copy this token.
+2. Send `/newbot` and follow prompts to pick a name and username for your bot.
+3. Copy the **HTTP API Token** provided by BotFather (e.g. `7123456789:AAH...`).
 
-### Step 2: Get Your Telegram Chat ID
-- **For Personal Alerts**: Search for **`@userinfobot`** or **`@raw_data_bot`** on Telegram and click Start. It will reply with your `id` (e.g. `123456789`).
-- **For Channels or Groups**: Add your new bot as an Admin to your channel/group. Use the channel username (e.g. `@my_deals_channel`) or group chat ID.
-
-### Step 3: Configure GitHub Repository Secrets
-1. Push / Fork this repository on GitHub.
-2. Go to your repository **Settings** → **Secrets and variables** → **Actions**.
-3. Click **New repository secret** and add the following:
-   - `TELEGRAM_BOT_TOKEN`: Paste the token from BotFather.
-   - `TELEGRAM_CHAT_ID`: Paste your Chat ID.
-   - `JIOMART_PINCODE`: Your 6-digit delivery PIN code (e.g. `560045`).
-
-### Step 4: Enable & Test the GitHub Action
-1. Go to the **Actions** tab in your repository.
-2. Click **JioMart Daily Deals Telegram Alert** on the left.
-3. Click **Run workflow** to test it instantly!
-4. The workflow will automatically trigger every night at **12:05 AM IST** (`18:35 UTC`).
-
----
-
-## 💻 Local Usage
-
-### Requirements
-- Python 3.8+
-- `requests` library (`pip install -r requirements.txt`)
-
-### 1. Telegram Notifier (`telegram_notifier.py`)
-
-#### Local Dry-Run Preview (Test message format without sending):
-```bash
-python telegram_notifier.py --pincode 560045 --min-discount 60 --limit 10 --dry-run
-```
-
-#### Send Telegram Message using CLI flags:
-```bash
-python telegram_notifier.py --token <BOT_TOKEN> --chat-id <CHAT_ID> --pincode 560045 --min-discount 60 --limit 20
-```
-
-#### Send Telegram Message using `.env` file:
+### Step 2: Set Token in `.env`
 1. Copy `.env.example` to `.env`:
    ```bash
    cp .env.example .env
    ```
-2. Fill in your `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, and `JIOMART_PINCODE`.
-3. Simply run:
-   ```bash
-   python telegram_notifier.py
+2. Set your `TELEGRAM_BOT_TOKEN`:
+   ```env
+   TELEGRAM_BOT_TOKEN=your_bot_token_from_botfather
    ```
 
----
-
-### 2. Interactive Terminal Fetcher (`jiomart_fetcher.py`)
-
-#### Basic Run with PIN Code & Minimum Discount:
+### Step 3: Run the Interactive Bot
 ```bash
-python jiomart_fetcher.py --pincode 560045 --min-discount 60 --limit 20
+python bot.py
 ```
-
-#### Search for Specific Items (e.g. "atta", "almonds", "ghee"):
-```bash
-python jiomart_fetcher.py --pincode 560045 --query "atta" --limit 10
-```
-
-#### Browse Other Departments (Electronics, Fashion, Beauty):
-```bash
-python jiomart_fetcher.py --dept electronics --min-discount 50 --limit 15
-```
-
-#### Export Results to CSV or JSON:
-```bash
-# Export to CSV
-python jiomart_fetcher.py --pincode 560045 --export csv --output top_deals.csv
-
-# Export to JSON
-python jiomart_fetcher.py --pincode 560045 --export json --output top_deals.json
-```
+Your bot is now online! Open your bot on Telegram, send `/start`, and reply with your 6-digit delivery PIN code.
 
 ---
 
-## ⚙️ Configuration Reference
+## 💻 24/7 Cloud Hosting (100% Free)
 
-| Environment Variable | CLI Argument | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `TELEGRAM_BOT_TOKEN` | `--token` | None | Telegram Bot token from @BotFather |
-| `TELEGRAM_CHAT_ID` | `--chat-id` | None | Target Telegram Chat ID or `@channel_name` |
-| `JIOMART_PINCODE` | `--pincode`, `-p` | Auto-detect | 6-digit Indian delivery PIN code |
-| `DEPARTMENT` | `--dept`, `-d` | `groceries` | Department: `groceries`, `electronics`, `fashion`, `beauty`, `home` |
-| `MIN_DISCOUNT` | `--min-discount` | `60` | Minimum discount percentage threshold |
-| `DEAL_LIMIT` | `--limit`, `-l` | `20` | Maximum number of deals to fetch/broadcast |
-| `IN_STOCK_ONLY` | `--in-stock` | `True` | Filter for in-stock and sellable items |
+You can host `bot.py` 24/7 on free container services like **Render**, **Fly.io**, **Railway**, or **Koyeb**:
+
+1. **Push your code to GitHub**:
+   ```bash
+   git init
+   git add .
+   git commit -m "JioMart Interactive Bot"
+   git remote add origin https://github.com/<your-username>/<your-repo-name>.git
+   git push -u origin main
+   ```
+2. **Deploy on Render (or any free platform)**:
+   - Create a new **Background Worker** or **Web Service** connected to your repo.
+   - Set Build Command: `pip install -r requirements.txt`
+   - Set Start Command: `python bot.py`
+   - Add Environment Variable: `TELEGRAM_BOT_TOKEN` = `<your_bot_token>`
+
+---
+
+## 📱 Bot Commands Reference
+
+| Command | Example | Description |
+| :--- | :--- | :--- |
+| `/start` | `/start` | Greets user and prompts for 6-digit delivery PIN code |
+| `560045` or `/pincode 560045` | `/pincode 560045` | Validates and saves delivery location |
+| `/deals` | `/deals` | Instantly fetches current top deals for your saved PIN |
+| `/deals <pin>` | `/deals 400001` | On-demand deals lookup for any other PIN |
+| `/mindiscount <pct>` | `/mindiscount 70` | Filter deals with minimum discount percentage |
+| `/settings` | `/settings` | Displays your active PIN, city, discount threshold |
+| `/pause` | `/pause` | Mutes automated 5x daily broadcasts |
+| `/resume` | `/resume` | Resumes automated 5x daily broadcasts |
+| `/help` | `/help` | Detailed command list and guidance |
+
+---
+
+## 🛠️ Standalone Scripts
+
+- **`jiomart_fetcher.py`**: Pure CLI discount fetcher with rich color table output and CSV/JSON export.
+- **`telegram_notifier.py`**: Single-run notifier script suitable for GitHub Actions cron or manual dry-run.
+- **`bot.py`**: Interactive multi-user Telegram bot + 5x daily diffing scheduler.
+- **`database.py`**: SQLite database layer for user profiles and product price history.
+- **`deal_differ.py`**: Smart deal diffing engine.
 
 ---
 
 ## 📄 License
-MIT License. Free for personal, non-commercial use.
+MIT License. Free for personal and non-commercial use.

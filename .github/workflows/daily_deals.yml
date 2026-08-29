@@ -2,8 +2,16 @@ name: JioMart Daily Deals Telegram Alert
 
 on:
   schedule:
-    # Runs at 18:35 UTC every day = 00:05 AM IST (midnight alert)
+    # 12:05 AM IST (00:05 IST) = 18:35 UTC (prev day)
     - cron: '35 18 * * *'
+    # 06:00 AM IST = 00:30 UTC
+    - cron: '30 0 * * *'
+    # 12:00 PM IST = 06:30 UTC
+    - cron: '30 6 * * *'
+    # 04:00 PM IST = 10:30 UTC
+    - cron: '30 10 * * *'
+    # 08:00 PM IST = 14:30 UTC
+    - cron: '30 14 * * *'
   workflow_dispatch: # Allows manual trigger from GitHub web interface anytime
     inputs:
       min_discount:
