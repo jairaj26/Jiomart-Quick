@@ -56,15 +56,23 @@ from deal_differ import (
 
 # Load .env if present
 def load_env(filepath: str = ".env") -> None:
-    if not os.path.exists(filepath):
-        return
+    if not os.path.isabs(filepath) and not os.path.exists(filepath):
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        alt_path = os.path.join(script_dir, filepath)
+        if os.path.exists(alt_path):
+            filepath = alt_path
+        else:
+            return
     try:
         with open(filepath, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
+                if not line or line.startswith("#"):
                     continue
-                k, v = line.split("=", 1)
+                delimiter = "=" if "=" in line else (":" if ":" in line else None)
+                if not delimiter:
+                    continue
+                k, v = line.split(delimiter, 1)
                 k = k.strip()
                 v = v.strip().strip("'\"")
                 if k and k not in os.environ:
@@ -86,7 +94,7 @@ def escape_html(text: str) -> str:
 
 
 def call_telegram_api(method: str, params: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
-    """Calls Telegram Bot API methods."""
+    """Calls Telegram Bot API methods with error logging."""
     if not BOT_TOKEN:
         return None
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
@@ -100,7 +108,12 @@ def call_telegram_api(method: str, params: Optional[Dict[str, Any]] = None) -> O
         with urllib.request.urlopen(req, timeout=25) as response:
             res_body = response.read().decode("utf-8")
             return json.loads(res_body)
-    except Exception:
+    except urllib.error.HTTPError as e:
+        err_body = e.read().decode("utf-8", errors="ignore")
+        print(f"Telegram API Error ({method}): HTTP {e.code} - {err_body}")
+        return None
+    except Exception as e:
+        print(f"Telegram API Exception ({method}): {e}")
         return None
 
 
