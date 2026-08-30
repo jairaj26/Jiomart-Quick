@@ -268,13 +268,14 @@ def handle_fetch_deals(user_id: int, target_pincode: Optional[str] = None) -> No
         return
 
     min_discount = user.get("min_discount", 60.0) if user else 60.0
-    limit = user.get("deal_limit", 10) if user else 10
+    display_limit = user.get("deal_limit", 15) if user else 15
 
     fetcher = JioMartProductFetcher(pincode=pincode)
     result = fetcher.fetch_products(
         department="groceries",
         sort_on="discount_dsc",
-        limit=limit,
+        limit=60,
+        max_pages=5,
         min_discount=min_discount,
         in_stock_only=True
     )
@@ -285,11 +286,12 @@ def handle_fetch_deals(user_id: int, target_pincode: Optional[str] = None) -> No
     # Analyze & update database history
     changed, stale = analyze_and_update_deals(products, pincode)
 
+    # Display top matching deals from the 5 pages
     msg = format_deals_list(
-        products=products,
+        products=products[:display_limit],
         location_title=city,
         pincode=pincode,
-        header_subtitle=f"Top Deals (≥{min_discount:.0f}% OFF)"
+        header_subtitle=f"Top Deals across 5 Pages (≥{min_discount:.0f}% OFF)"
     )
     send_message(user_id, msg)
 
@@ -439,7 +441,8 @@ def run_scheduled_broadcast() -> None:
             result = fetcher.fetch_products(
                 department="groceries",
                 sort_on="discount_dsc",
-                limit=30,
+                limit=60,
+                max_pages=5,
                 min_discount=50.0,
                 in_stock_only=True
             )
@@ -448,7 +451,7 @@ def run_scheduled_broadcast() -> None:
 
             # Run diff against historical records
             changed_deals, stale_deals = analyze_and_update_deals(products, pin)
-            print(f"PIN {pin}: {len(products)} total items | {len(changed_deals)} changes | {len(stale_deals)} stale items filtered out.")
+            print(f"PIN {pin}: {len(products)} total items across 5 pages | {len(changed_deals)} changes | {len(stale_deals)} stale items filtered out.")
 
             if not changed_deals:
                 print(f"PIN {pin}: No new deal changes or price drops. Skipping broadcast to avoid spam.")
@@ -457,7 +460,7 @@ def run_scheduled_broadcast() -> None:
             # Broadcast changes to each user matching their min_discount threshold
             for u in users:
                 user_min_disc = u.get("min_discount", 60.0)
-                user_deals = [d for d in changed_deals if d.get("discount_pct", 0) >= user_min_disc][:10]
+                user_deals = [d for d in changed_deals if d.get("discount_pct", 0) >= user_min_disc][:15]
 
                 if not user_deals:
                     continue
