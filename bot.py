@@ -483,6 +483,27 @@ def handle_help(user_id: int) -> None:
     send_message(user_id, text, reply_markup=get_deals_inline_keyboard())
 
 
+# --- Bot Commands Registration (Native Telegram Menu Button) ---
+
+def register_bot_commands() -> None:
+    """Registers bot commands with Telegram API so the native 'Menu' popup button appears."""
+    commands = [
+        {"command": "deals", "description": "🔥 Top deals across categories"},
+        {"command": "more", "description": "⏩ Browse next 15 deals"},
+        {"command": "categories", "description": "📂 Interactive category buttons"},
+        {"command": "search", "description": "🔍 Search items (e.g. /search atta)"},
+        {"command": "pincode", "description": "📍 Change delivery PIN code"},
+        {"command": "mindiscount", "description": "🎯 Set minimum discount filter"},
+        {"command": "settings", "description": "⚙️ View location & preferences"},
+        {"command": "pause", "description": "⏸️ Pause daily alert broadcasts"},
+        {"command": "resume", "description": "🔔 Resume daily alert broadcasts"},
+        {"command": "help", "description": "📖 Help and shortcuts"}
+    ]
+    res = call_telegram_api("setMyCommands", {"commands": commands})
+    if res and res.get("ok"):
+        print(f"{Colors.GREEN}✓ Registered Telegram native Menu button commands successfully.{Colors.RESET}")
+
+
 # --- Dispatcher for Incoming Messages & Callback Queries ---
 
 def process_telegram_update(update: Dict[str, Any]) -> None:
@@ -513,9 +534,25 @@ def process_telegram_update(update: Dict[str, Any]) -> None:
     user_id = chat.get("id")
     username = message.get("from", {}).get("username", "")
     first_name = message.get("from", {}).get("first_name", "User")
-    text = (message.get("text") or "").strip()
 
-    if not user_id or not text:
+    if not user_id:
+        return
+
+    # 3. Reject Media Uploads (photos, documents, audio, stickers, voice, etc.)
+    non_text_types = [
+        "photo", "document", "audio", "video", "voice", "sticker",
+        "animation", "video_note", "contact", "location"
+    ]
+    if any(k in message for k in non_text_types):
+        send_message(
+            user_id,
+            "⚠️ <b>Media uploads are not supported.</b>\n\nPlease select an option from the <b>Menu ☰</b> or tap a category button below:",
+            reply_markup=get_deals_inline_keyboard()
+        )
+        return
+
+    text = (message.get("text") or "").strip()
+    if not text:
         return
 
     # Check for direct 6-digit PIN input
@@ -584,7 +621,15 @@ def process_telegram_update(update: Dict[str, Any]) -> None:
     elif cmd in ["/help", "help", "?"]:
         handle_help(user_id)
     else:
-        send_message(user_id, "💡 Send <code>/deals</code> to view current deals or <code>/help</code> for available commands.", reply_markup=get_deals_inline_keyboard())
+        # Enforce valid choice for arbitrary text/sentences
+        guidance = (
+            "💡 <b>Please choose an option from the Menu ☰ or tap a category below:</b>\n\n"
+            "• <code>/deals</code> — Top deals across all categories\n"
+            "• <code>/more</code> — Browse next 15 deals\n"
+            "• <code>/search &lt;item&gt;</code> — Search products (e.g. <code>/search ghee</code>)\n"
+            "• Send your <b>6-digit PIN code</b> to update delivery location"
+        )
+        send_message(user_id, guidance, reply_markup=get_deals_inline_keyboard())
 
 
 # --- Background Scheduler (5x Daily IST: 12:05am, 6am, 12pm, 4pm, 8pm) ---
@@ -746,7 +791,11 @@ def start_polling() -> None:
     print(f"{Colors.GREEN}🤖 JioMart Deals Hunter Bot is Online!{Colors.RESET}")
     print(f"⏰ Scheduler Active (5x Daily: 12:05am, 6am, 12pm, 4pm, 8pm IST)")
     print(f"🔘 Interactive Category Buttons & /more Pagination Enabled")
+    print(f"📋 Native Telegram Menu Button Registered")
     print(f"{Colors.GREEN}===================================================={Colors.RESET}\n")
+
+    # Register native Telegram Menu button commands
+    register_bot_commands()
 
     # Start HTTP health check server for Render Free Web Service
     start_health_server()
