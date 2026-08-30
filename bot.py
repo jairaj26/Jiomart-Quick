@@ -5,11 +5,11 @@ Dynamic Multi-User JioMart Telegram Bot & 5x Daily Deal Engine
 =============================================================================
 A standalone, interactive Telegram Bot that:
 1. Greets users on /start and dynamically saves their 6-digit delivery PIN.
-2. Serves on-demand deals specific to each user's location (/deals).
-3. Automatically runs 5 times a day (12:05 AM, 6 AM, 12 PM, 4 PM, 8 PM IST).
-4. Uses smart deal diffing to ONLY broadcast new deals, price drops, and restocks,
-   completely filtering out permanent/stale 85% discount items.
-5. Zero external heavy dependencies (pure requests/urllib + SQLite + threading).
+2. Supports interactive Category Buttons (Atta/Rice/Oil, Snacks, Kitchen, Electronics).
+3. Supports /more pagination, /search <keyword>, and category commands.
+4. Automatically runs 5 times a day (12:05 AM, 6 AM, 12 PM, 4 PM, 8 PM IST).
+5. Uses smart deal diffing and a Two-Tier Alert Cycle (Daily 12:05 AM Master Digest
+   and Intra-Day Flash Price Drops).
 =============================================================================
 """
 
@@ -39,12 +39,20 @@ from database import (
     save_or_update_user,
     update_user_pincode,
     set_user_min_discount,
+    set_user_nav_state,
+    get_user_nav_state,
     toggle_user_active,
     get_all_active_users,
     get_unique_active_pincodes,
     get_users_by_pincode
 )
-from deal_differ import analyze_and_update_deals, group_products_by_category, DiffType
+from deal_differ import (
+    analyze_and_update_deals,
+    group_products_by_category,
+    filter_by_category_code,
+    CATEGORY_MAP,
+    DiffType
+)
 
 # Load .env if present
 def load_env(filepath: str = ".env") -> None:
@@ -92,17 +100,26 @@ def call_telegram_api(method: str, params: Optional[Dict[str, Any]] = None) -> O
         with urllib.request.urlopen(req, timeout=25) as response:
             res_body = response.read().decode("utf-8")
             return json.loads(res_body)
-    except Exception as e:
+    except Exception:
         return None
+
+
+def answer_callback_query(callback_query_id: str, text: Optional[str] = None) -> None:
+    """Answers a Telegram inline button click to stop the loading spinner."""
+    params = {"callback_query_id": callback_query_id}
+    if text:
+        params["text"] = text
+    call_telegram_api("answerCallbackQuery", params)
 
 
 def send_message(
     chat_id: int,
     text: str,
     parse_mode: str = "HTML",
-    disable_web_page_preview: bool = True
+    disable_web_page_preview: bool = True,
+    reply_markup: Optional[Dict[str, Any]] = None
 ) -> bool:
-    """Sends a Telegram message to a specific chat/user with clean chunking."""
+    """Sends a Telegram message to a specific chat/user with clean chunking and buttons."""
     if len(text) <= 4000:
         chunks = [text]
     else:
@@ -119,16 +136,47 @@ def send_message(
             chunks.append(curr)
 
     success = True
-    for chunk in chunks:
-        res = call_telegram_api("sendMessage", {
+    for idx, chunk in enumerate(chunks):
+        payload: Dict[str, Any] = {
             "chat_id": chat_id,
             "text": chunk,
             "parse_mode": parse_mode,
             "disable_web_page_preview": disable_web_page_preview
-        })
+        }
+        # Attach reply markup to the last chunk
+        if idx == len(chunks) - 1 and reply_markup:
+            payload["reply_markup"] = reply_markup
+
+        res = call_telegram_api("sendMessage", payload)
         if not (res and res.get("ok")):
             success = False
     return success
+
+
+# --- Interactive Keyboards ---
+
+def get_deals_inline_keyboard(active_cat: str = "cat_all") -> Dict[str, Any]:
+    """Generates clean inline buttons for category filtering and pagination."""
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "🌾 Atta, Rice & Oil", "callback_data": "cat_atta"},
+                {"text": "🥨 Dry Fruits & Snacks", "callback_data": "cat_snacks"}
+            ],
+            [
+                {"text": "🧼 Kitchen & Cookware", "callback_data": "cat_kitchen"},
+                {"text": "🧴 Bath & Beauty", "callback_data": "cat_personal"}
+            ],
+            [
+                {"text": "🎧 Electronics & Gadgets", "callback_data": "cat_electronics"},
+                {"text": "🎁 Festive & General", "callback_data": "cat_general"}
+            ],
+            [
+                {"text": "⏩ Next 15 Deals (/more)", "callback_data": "action_more"},
+                {"text": "🔥 All Top Deals", "callback_data": "cat_all"}
+            ]
+        ]
+    }
 
 
 # --- Category-Grouped Deal Formatting Helpers ---
@@ -218,13 +266,15 @@ def handle_start(user_id: int, username: str, first_name: str) -> None:
             f"📍 <b>Current Location:</b> {escape_html(city)} (PIN: <code>{pincode}</code>)\n"
             f"🎯 <b>Min Discount:</b> {user.get('min_discount', 60.0):.0f}%\n"
             f"🔔 <b>Alerts:</b> {'Active (5x Daily)' if user.get('is_active', 1) else 'Paused'}\n\n"
-            f"<b>Available Commands:</b>\n"
-            f"• <code>/deals</code> — Fetch latest top deals right now\n"
-            f"• <code>/pincode &lt;6-digit PIN&gt;</code> — Change your delivery location\n"
-            f"• <code>/mindiscount &lt;percent&gt;</code> — Change min discount filter\n"
-            f"• <code>/pause</code> or <code>/resume</code> — Toggle automated deal alerts\n"
-            f"• <code>/settings</code> — View your preferences"
+            f"<b>Quick Actions:</b>\n"
+            f"• <code>/deals</code> — Fetch latest top deals (with category buttons)\n"
+            f"• <code>/more</code> — Browse next 15 deals\n"
+            f"• <code>/search &lt;keyword&gt;</code> — Search (e.g. <code>/search atta</code>)\n"
+            f"• <code>/pincode &lt;PIN&gt;</code> — Change your delivery location\n"
+            f"• <code>/mindiscount &lt;%&gt;</code> — Change discount filter\n"
+            f"• <code>/pause</code> / <code>/resume</code> — Toggle automated alerts"
         )
+        send_message(user_id, text, reply_markup=get_deals_inline_keyboard())
     else:
         save_or_update_user(user_id=user_id, username=username, first_name=first_name)
         text = (
@@ -233,7 +283,7 @@ def handle_start(user_id: int, username: str, first_name: str) -> None:
             f"📍 <b>To get started, please reply with your 6-digit delivery PIN code:</b>\n"
             f"<i>Example: Send <code>560045</code> or type <code>/pincode 560045</code></i>"
         )
-    send_message(user_id, text)
+        send_message(user_id, text)
 
 
 def handle_set_pincode(user_id: int, pincode_str: str) -> None:
@@ -263,16 +313,23 @@ def handle_set_pincode(user_id: int, pincode_str: str) -> None:
         f"✅ <b>Location Saved Successfully!</b>\n\n"
         f"📍 <b>City:</b> {escape_html(city)}, {escape_html(state)}\n"
         f"📮 <b>PIN Code:</b> <code>{pincode_str}</code>\n"
-        f"⏰ <b>Scheduled Alerts:</b> Active at 12:05 AM, 6 AM, 12 PM, 4 PM & 8 PM IST.\n\n"
+        f"⏰ <b>Scheduled Alerts:</b> Active at 12:05 AM (Master Digest) & 6 AM, 12 PM, 4 PM, 8 PM (Flash Deals).\n\n"
         f"⚡ <i>Fetching top deals for your location right now...</i>"
     )
     send_message(user_id, msg)
 
     # Deliver immediate deals
-    handle_fetch_deals(user_id, target_pincode=pincode_str)
+    handle_fetch_deals(user_id, target_pincode=pincode_str, category_code="cat_all", page_start=1)
 
 
-def handle_fetch_deals(user_id: int, target_pincode: Optional[str] = None) -> None:
+def handle_fetch_deals(
+    user_id: int,
+    target_pincode: Optional[str] = None,
+    category_code: str = "cat_all",
+    page_start: int = 1,
+    query: Optional[str] = None
+) -> None:
+    """Fetches deals with category filtering, search, and pagination."""
     user = get_user(user_id)
     pincode = target_pincode or (user.get("pincode") if user else None)
 
@@ -283,31 +340,78 @@ def handle_fetch_deals(user_id: int, target_pincode: Optional[str] = None) -> No
     min_discount = user.get("min_discount", 60.0) if user else 60.0
     display_limit = user.get("deal_limit", 15) if user else 15
 
+    # Update navigation state in DB
+    set_user_nav_state(user_id, page=page_start, category=category_code, query=query or "")
+
+    # Determine department
+    department = "electronics" if category_code == "cat_electronics" else "groceries"
+
     fetcher = JioMartProductFetcher(pincode=pincode)
     result = fetcher.fetch_products(
-        department="groceries",
+        department=department,
         sort_on="discount_dsc",
         limit=60,
+        page_start=page_start,
         max_pages=5,
-        min_discount=min_discount,
+        query=query if query else None,
+        min_discount=min_discount if not query else None,
         in_stock_only=True
     )
 
-    products = result.get("products", [])
+    all_products = result.get("products", [])
     city = fetcher.location_info.get("city", "Bengaluru")
 
-    # Analyze & update database history
-    changed, stale = analyze_and_update_deals(products, pincode)
+    # Apply category filter
+    if category_code and category_code != "cat_all":
+        products = filter_by_category_code(all_products, category_code)
+    else:
+        products = all_products
 
-    # Display top matching deals from the 5 pages
-    msg = format_deals_list(
-        products=products[:display_limit],
-        location_title=city,
-        pincode=pincode,
-        header_title="JioMart Top Deals",
-        header_subtitle=f"Across 5 Pages (≥{min_discount:.0f}% OFF)"
+    # Analyze & update database history
+    changed, stale = analyze_and_update_deals(all_products, pincode)
+
+    cat_title = CATEGORY_MAP.get(category_code, "Top Deals")
+    page_range_str = f"Pages {page_start}–{page_start + 4}"
+
+    if query:
+        header_title = f"Search Results for '{escape_html(query)}'"
+        header_sub = f"Location: {city} | {page_range_str}"
+    else:
+        header_title = f"{cat_title}"
+        header_sub = f"Location: {city} | {page_range_str} (≥{min_discount:.0f}% OFF)"
+
+    if not products:
+        msg = (
+            f"🛒 <b>No Deals Found</b>\n\n"
+            f"No deals matched in <b>{escape_html(cat_title)}</b> for PIN <code>{pincode}</code> on {page_range_str}.\n"
+            f"💡 Try clicking a different category button below or type <code>/deals</code> to return to top deals."
+        )
+    else:
+        msg = format_deals_list(
+            products=products[:display_limit],
+            location_title=city,
+            pincode=pincode,
+            header_title=header_title,
+            header_subtitle=header_sub
+        )
+
+    send_message(
+        user_id,
+        msg,
+        reply_markup=get_deals_inline_keyboard(active_cat=category_code)
     )
-    send_message(user_id, msg)
+
+
+def handle_more_deals(user_id: int) -> None:
+    """Fetches the next batch of deals (Pages 6-10, 11-15, etc.)."""
+    curr_page, curr_cat, curr_query = get_user_nav_state(user_id)
+    next_page = curr_page + 5
+    handle_fetch_deals(
+        user_id,
+        category_code=curr_cat or "cat_all",
+        page_start=next_page,
+        query=curr_query if curr_query else None
+    )
 
 
 def handle_set_mindiscount(user_id: int, disc_str: str) -> None:
@@ -344,7 +448,7 @@ def handle_settings(user_id: int) -> None:
         f"• <code>/mindiscount &lt;pct&gt;</code> — Change discount threshold\n"
         f"• <code>/pause</code> / <code>/resume</code> — Toggle automated alerts"
     )
-    send_message(user_id, text)
+    send_message(user_id, text, reply_markup=get_deals_inline_keyboard())
 
 
 def handle_toggle_pause(user_id: int, pause: bool) -> None:
@@ -357,24 +461,50 @@ def handle_toggle_pause(user_id: int, pause: bool) -> None:
 
 def handle_help(user_id: int) -> None:
     text = (
-        f"📖 <b>JioMart Deals Hunter — Commands</b>\n\n"
-        f"• <code>/deals</code> — Get top deals for your saved PIN (Categorized)\n"
-        f"• <code>/deals &lt;pin&gt;</code> — Search deals for any other PIN\n"
-        f"• <code>/pincode &lt;pin&gt;</code> — Update your delivery location\n"
+        f"📖 <b>JioMart Deals Hunter — Commands & Shortcuts</b>\n\n"
+        f"<b>Deals & Categories:</b>\n"
+        f"• <code>/deals</code> — Top deals with interactive category buttons\n"
+        f"• <code>/more</code> — Browse next 15 deals (Pages 6–10, 11–15...)\n"
+        f"• <code>/atta</code> or <code>/rice</code> or <code>/oil</code> — Atta, Rice, Dal & Oil deals\n"
+        f"• <code>/snacks</code> or <code>/dryfruits</code> — Dry Fruits & Snacks deals\n"
+        f"• <code>/kitchen</code> or <code>/home</code> — Kitchen & Cookware deals\n"
+        f"• <code>/beauty</code> or <code>/personal</code> — Personal Care deals\n"
+        f"• <code>/electronics</code> — Gadgets & Electronics\n"
+        f"• <code>/search &lt;item&gt;</code> — Search any keyword (e.g. <code>/search ghee</code>)\n\n"
+        f"<b>Settings:</b>\n"
+        f"• <code>/pincode &lt;pin&gt;</code> — Update delivery location\n"
         f"• <code>/mindiscount &lt;pct&gt;</code> — Filter by minimum discount (e.g. 70)\n"
-        f"• <code>/settings</code> — View your current profile & preferences\n"
-        f"• <code>/pause</code> — Mute automated scheduled alerts\n"
-        f"• <code>/resume</code> — Unmute scheduled alerts\n\n"
+        f"• <code>/settings</code> — View current profile\n"
+        f"• <code>/pause</code> / <code>/resume</code> — Toggle scheduled alerts\n\n"
         f"⏰ <b>Broadcast Schedule:</b>\n"
         f"• <b>12:05 AM IST:</b> Daily Master Digest (All Top Deals)\n"
         f"• <b>6 AM, 12 PM, 4 PM, 8 PM IST:</b> Flash Alerts (New Price Drops Only)"
     )
-    send_message(user_id, text)
+    send_message(user_id, text, reply_markup=get_deals_inline_keyboard())
 
 
-# --- Dispatcher for Incoming Messages ---
+# --- Dispatcher for Incoming Messages & Callback Queries ---
 
 def process_telegram_update(update: Dict[str, Any]) -> None:
+    # 1. Handle Inline Button Callback Queries
+    callback_query = update.get("callback_query")
+    if callback_query:
+        cb_id = callback_query.get("id")
+        user_id = callback_query.get("from", {}).get("id")
+        data = callback_query.get("data", "")
+
+        if not user_id or not cb_id:
+            return
+
+        answer_callback_query(cb_id)
+
+        if data == "action_more":
+            handle_more_deals(user_id)
+        elif data.startswith("cat_"):
+            handle_fetch_deals(user_id, category_code=data, page_start=1)
+        return
+
+    # 2. Handle Text Messages
     message = update.get("message")
     if not message:
         return
@@ -404,9 +534,43 @@ def process_telegram_update(update: Dict[str, Any]) -> None:
     elif cmd == "/pincode":
         send_message(user_id, "📍 Please specify your 6-digit PIN code. Example: <code>/pincode 560045</code>")
     elif cmd == "/deals" and len(parts) > 1:
-        handle_fetch_deals(user_id, target_pincode=parts[1])
+        # Check if second argument is a PIN code or category
+        arg = parts[1].strip()
+        if len(arg) == 6 and arg.isdigit():
+            handle_fetch_deals(user_id, target_pincode=arg, category_code="cat_all", page_start=1)
+        elif arg.lower() in ["atta", "rice", "oil", "staples"]:
+            handle_fetch_deals(user_id, category_code="cat_atta", page_start=1)
+        elif arg.lower() in ["snacks", "dryfruits", "dairy"]:
+            handle_fetch_deals(user_id, category_code="cat_snacks", page_start=1)
+        elif arg.lower() in ["kitchen", "home", "cleaning"]:
+            handle_fetch_deals(user_id, category_code="cat_kitchen", page_start=1)
+        elif arg.lower() in ["beauty", "personal", "care"]:
+            handle_fetch_deals(user_id, category_code="cat_personal", page_start=1)
+        elif arg.lower() in ["electronics", "gadgets"]:
+            handle_fetch_deals(user_id, category_code="cat_electronics", page_start=1)
+        else:
+            handle_fetch_deals(user_id, query=" ".join(parts[1:]), page_start=1)
     elif cmd == "/deals":
-        handle_fetch_deals(user_id)
+        handle_fetch_deals(user_id, category_code="cat_all", page_start=1)
+    elif cmd == "/more":
+        handle_more_deals(user_id)
+    elif cmd in ["/atta", "/rice", "/oil", "/staples"]:
+        handle_fetch_deals(user_id, category_code="cat_atta", page_start=1)
+    elif cmd in ["/snacks", "/dryfruits"]:
+        handle_fetch_deals(user_id, category_code="cat_snacks", page_start=1)
+    elif cmd in ["/kitchen", "/home", "/cleaning"]:
+        handle_fetch_deals(user_id, category_code="cat_kitchen", page_start=1)
+    elif cmd in ["/beauty", "/personal", "/personalcare"]:
+        handle_fetch_deals(user_id, category_code="cat_personal", page_start=1)
+    elif cmd in ["/electronics", "/gadgets"]:
+        handle_fetch_deals(user_id, category_code="cat_electronics", page_start=1)
+    elif cmd in ["/categories", "/cat"]:
+        send_message(user_id, "📂 <b>Select a Category below:</b>", reply_markup=get_deals_inline_keyboard())
+    elif cmd == "/search" and len(parts) > 1:
+        query_str = " ".join(parts[1:])
+        handle_fetch_deals(user_id, query=query_str, page_start=1)
+    elif cmd == "/search":
+        send_message(user_id, "🔍 Please specify a keyword to search. Example: <code>/search dry fruits</code> or <code>/search atta</code>")
     elif cmd == "/mindiscount" and len(parts) > 1:
         handle_set_mindiscount(user_id, parts[1])
     elif cmd == "/mindiscount":
@@ -420,7 +584,7 @@ def process_telegram_update(update: Dict[str, Any]) -> None:
     elif cmd in ["/help", "help", "?"]:
         handle_help(user_id)
     else:
-        send_message(user_id, "💡 Send <code>/deals</code> to view current deals or <code>/help</code> for available commands.")
+        send_message(user_id, "💡 Send <code>/deals</code> to view current deals or <code>/help</code> for available commands.", reply_markup=get_deals_inline_keyboard())
 
 
 # --- Background Scheduler (5x Daily IST: 12:05am, 6am, 12pm, 4pm, 8pm) ---
@@ -460,6 +624,7 @@ def run_scheduled_broadcast(is_master_digest: bool = False) -> None:
                 department="groceries",
                 sort_on="discount_dsc",
                 limit=60,
+                page_start=1,
                 max_pages=5,
                 min_discount=50.0,
                 in_stock_only=True
@@ -500,7 +665,11 @@ def run_scheduled_broadcast(is_master_digest: bool = False) -> None:
                     header_subtitle=header_sub,
                     include_diff_tag=include_diff_tag
                 )
-                send_message(u["user_id"], msg)
+                send_message(
+                    u["user_id"],
+                    msg,
+                    reply_markup=get_deals_inline_keyboard()
+                )
                 print(f"✓ Sent {len(user_deals)} categorized deals to User ID: {u['user_id']}")
 
         except Exception as e:
@@ -552,7 +721,7 @@ def start_health_server() -> None:
                 self.wfile.write(b"JioMart Telegram Bot is running healthy!\n")
 
             def log_message(self, format, *args):
-                pass  # Suppress HTTP access logs to keep console clean
+                pass
 
         port = int(port_str)
         server = HTTPServer(("0.0.0.0", port), HealthHandler)
@@ -576,6 +745,7 @@ def start_polling() -> None:
     print(f"\n{Colors.GREEN}===================================================={Colors.RESET}")
     print(f"{Colors.GREEN}🤖 JioMart Deals Hunter Bot is Online!{Colors.RESET}")
     print(f"⏰ Scheduler Active (5x Daily: 12:05am, 6am, 12pm, 4pm, 8pm IST)")
+    print(f"🔘 Interactive Category Buttons & /more Pagination Enabled")
     print(f"{Colors.GREEN}===================================================={Colors.RESET}\n")
 
     # Start HTTP health check server for Render Free Web Service
@@ -601,4 +771,3 @@ def start_polling() -> None:
 
 if __name__ == "__main__":
     start_polling()
-

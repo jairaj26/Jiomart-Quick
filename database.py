@@ -2,7 +2,8 @@
 =============================================================================
 JioMart Bot Database Layer (SQLite)
 =============================================================================
-Manages user profiles, preferences, product price history, and daily alert state.
+Manages user profiles, preferences, navigation pagination states,
+product price history, and daily alert state.
 =============================================================================
 """
 
@@ -38,6 +39,9 @@ def init_db() -> None:
                 min_discount REAL DEFAULT 60.0,
                 deal_limit INTEGER DEFAULT 15,
                 is_active BOOLEAN DEFAULT 1,
+                nav_page INTEGER DEFAULT 1,
+                nav_category TEXT DEFAULT '',
+                nav_query TEXT DEFAULT '',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_active_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -66,15 +70,18 @@ def init_db() -> None:
         """)
 
         # Safe migrations for existing databases
-        try:
-            cursor.execute("ALTER TABLE product_history ADD COLUMN last_alert_date TEXT")
-        except sqlite3.OperationalError:
-            pass
-
-        try:
-            cursor.execute("ALTER TABLE product_history ADD COLUMN category_bucket TEXT")
-        except sqlite3.OperationalError:
-            pass
+        migrations = [
+            "ALTER TABLE product_history ADD COLUMN last_alert_date TEXT",
+            "ALTER TABLE product_history ADD COLUMN category_bucket TEXT",
+            "ALTER TABLE users ADD COLUMN nav_page INTEGER DEFAULT 1",
+            "ALTER TABLE users ADD COLUMN nav_category TEXT DEFAULT ''",
+            "ALTER TABLE users ADD COLUMN nav_query TEXT DEFAULT ''"
+        ]
+        for m in migrations:
+            try:
+                cursor.execute(m)
+            except sqlite3.OperationalError:
+                pass
 
         # 3. Alert Logs
         cursor.execute("""
@@ -177,6 +184,40 @@ def set_user_min_discount(user_id: int, min_discount: float) -> None:
             WHERE user_id = ?
         """, (min_discount, now, user_id))
         conn.commit()
+
+
+def set_user_nav_state(
+    user_id: int,
+    page: int = 1,
+    category: Optional[str] = None,
+    query: Optional[str] = None
+) -> None:
+    """Updates the user's pagination, active category, or active search query."""
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE users
+            SET nav_page = ?, nav_category = COALESCE(?, nav_category),
+                nav_query = COALESCE(?, nav_query), last_active_at = ?
+            WHERE user_id = ?
+        """, (page, category, query, now, user_id))
+        conn.commit()
+
+
+def get_user_nav_state(user_id: int) -> Tuple[int, str, str]:
+    """Returns (nav_page, nav_category, nav_query) for the user."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT nav_page, nav_category, nav_query FROM users WHERE user_id = ?", (user_id,))
+        row = cursor.fetchone()
+        if row:
+            return (
+                row["nav_page"] or 1,
+                row["nav_category"] or "",
+                row["nav_query"] or ""
+            )
+        return (1, "", "")
 
 
 def toggle_user_active(user_id: int, is_active: bool) -> None:
