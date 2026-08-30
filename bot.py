@@ -335,6 +335,30 @@ def handle_set_pincode(user_id: int, pincode_str: str) -> None:
     handle_fetch_deals(user_id, target_pincode=pincode_str, category_code="cat_all", page_start=1)
 
 
+# In-memory fetcher cache for instant response
+FETCHER_CACHE: Dict[str, JioMartProductFetcher] = {}
+
+def get_cached_fetcher(pincode: str) -> JioMartProductFetcher:
+    """Returns a cached JioMartProductFetcher instance to avoid re-resolving logistics."""
+    if pincode not in FETCHER_CACHE:
+        FETCHER_CACHE[pincode] = JioMartProductFetcher(pincode=pincode)
+    return FETCHER_CACHE[pincode]
+
+
+def send_chat_action(chat_id: int, action: str = "typing") -> None:
+    """Sends chat action indicator (typing...) to Telegram client."""
+    call_telegram_api("sendChatAction", {"chat_id": chat_id, "action": action})
+
+
+CATEGORY_SEARCH_TERMS = {
+    "cat_atta": "atta dal rice oil ghee flour pulse grain",
+    "cat_snacks": "dry fruit almond cashew snack biscuit chocolate tea coffee",
+    "cat_kitchen": "chopper cookware bottle container pan cleaning utensil",
+    "cat_personal": "soap shampoo facewash toothpaste cream lotion bodywash",
+    "cat_general": "pooja rakhi festival festive agarbatti"
+}
+
+
 def handle_fetch_deals(
     user_id: int,
     target_pincode: Optional[str] = None,
@@ -342,7 +366,7 @@ def handle_fetch_deals(
     page_start: int = 1,
     query: Optional[str] = None
 ) -> None:
-    """Fetches deals with category filtering, search, and pagination."""
+    """Fetches deals with high speed, instant visual feedback, and category depth."""
     user = get_user(user_id)
     pincode = target_pincode or (user.get("pincode") if user else None)
 
@@ -350,32 +374,41 @@ def handle_fetch_deals(
         send_message(user_id, "📍 Please set your PIN code first by sending a 6-digit number (e.g. <code>560045</code>) or <code>/pincode 560045</code>.")
         return
 
-    min_discount = user.get("min_discount", 60.0) if user else 60.0
+    # Visual loading indication
+    send_chat_action(user_id, "typing")
+
+    user_min_discount = user.get("min_discount", 60.0) if user else 60.0
     display_limit = user.get("deal_limit", 15) if user else 15
 
     # Update navigation state in DB
     set_user_nav_state(user_id, page=page_start, category=category_code, query=query or "")
 
-    # Determine department
+    # Determine department and category-specific query
     department = "electronics" if category_code == "cat_electronics" else "groceries"
+    api_query = query if query else CATEGORY_SEARCH_TERMS.get(category_code)
 
-    fetcher = JioMartProductFetcher(pincode=pincode)
+    # For specific staple categories (Atta, Rice, etc.), adjust min_discount if set to 60%
+    effective_min_discount = user_min_discount
+    if category_code in ["cat_atta", "cat_snacks"] and not query:
+        effective_min_discount = min(user_min_discount, 20.0)
+
+    fetcher = get_cached_fetcher(pincode)
     result = fetcher.fetch_products(
         department=department,
         sort_on="discount_dsc",
-        limit=60,
+        limit=25,
         page_start=page_start,
-        max_pages=5,
-        query=query if query else None,
-        min_discount=min_discount if not query else None,
+        max_pages=3,
+        query=api_query,
+        min_discount=effective_min_discount if (not query or effective_min_discount < 50.0) else None,
         in_stock_only=True
     )
 
     all_products = result.get("products", [])
     city = fetcher.location_info.get("city", "Bengaluru")
 
-    # Apply category filter
-    if category_code and category_code != "cat_all":
+    # If general fetch, categorize; if specific query/category, use direct results
+    if category_code and category_code != "cat_all" and not api_query:
         products = filter_by_category_code(all_products, category_code)
     else:
         products = all_products
@@ -384,20 +417,21 @@ def handle_fetch_deals(
     changed, stale = analyze_and_update_deals(all_products, pincode)
 
     cat_title = CATEGORY_MAP.get(category_code, "Top Deals")
-    page_range_str = f"Pages {page_start}–{page_start + 4}"
+    page_range_str = f"Page {page_start}–{page_start + 2}" if page_start > 1 else "Top Deals"
 
     if query:
-        header_title = f"Search Results for '{escape_html(query)}'"
-        header_sub = f"Location: {city} | {page_range_str}"
+        header_title = f"Search: '{escape_html(query)}'"
+        header_sub = f"Location: {city}"
     else:
         header_title = f"{cat_title}"
-        header_sub = f"Location: {city} | {page_range_str} (≥{min_discount:.0f}% OFF)"
+        disc_label = f" (≥{effective_min_discount:.0f}% OFF)" if effective_min_discount else ""
+        header_sub = f"Location: {city}{disc_label}"
 
     if not products:
         msg = (
             f"🛒 <b>No Deals Found</b>\n\n"
-            f"No deals matched in <b>{escape_html(cat_title)}</b> for PIN <code>{pincode}</code> on {page_range_str}.\n"
-            f"💡 Try clicking a different category button below or type <code>/deals</code> to return to top deals."
+            f"No matching deals in <b>{escape_html(cat_title)}</b> for PIN <code>{pincode}</code>.\n"
+            f"💡 Tap another category below or choose <b>🔥 All Top Deals</b> to reset."
         )
     else:
         msg = format_deals_list(
@@ -527,10 +561,11 @@ def process_telegram_update(update: Dict[str, Any]) -> None:
         user_id = callback_query.get("from", {}).get("id")
         data = callback_query.get("data", "")
 
-        if not user_id or not cb_id:
-            return
-
-        answer_callback_query(cb_id)
+        # Show instant toast feedback so button stops loading immediately
+        cat_name = CATEGORY_MAP.get(data, "deals")
+        feedback_text = "⏩ Loading next page..." if data == "action_more" else f"🔍 Loading {cat_name}..."
+        answer_callback_query(cb_id, text=feedback_text)
+        send_chat_action(user_id, "typing")
 
         if data == "action_more":
             handle_more_deals(user_id)
