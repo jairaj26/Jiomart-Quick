@@ -2,7 +2,7 @@
 =============================================================================
 JioMart Bot Database Layer (SQLite)
 =============================================================================
-Manages user profiles, preferences, and product price history for deal diffing.
+Manages user profiles, preferences, product price history, and daily alert state.
 =============================================================================
 """
 
@@ -22,7 +22,7 @@ def get_db_connection() -> sqlite3.Connection:
 
 
 def init_db() -> None:
-    """Initializes the database schema if tables do not exist."""
+    """Initializes the database schema and performs safe migrations."""
     with get_db_connection() as conn:
         cursor = conn.cursor()
         
@@ -36,7 +36,7 @@ def init_db() -> None:
                 city TEXT,
                 state TEXT,
                 min_discount REAL DEFAULT 60.0,
-                deal_limit INTEGER DEFAULT 10,
+                deal_limit INTEGER DEFAULT 15,
                 is_active BOOLEAN DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_active_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -50,6 +50,7 @@ def init_db() -> None:
                 pincode TEXT,
                 name TEXT,
                 brand TEXT,
+                category_bucket TEXT,
                 effective_price REAL,
                 mrp REAL,
                 discount_pct REAL,
@@ -57,13 +58,25 @@ def init_db() -> None:
                 in_stock BOOLEAN,
                 url TEXT,
                 quantity TEXT,
+                last_alert_date TEXT,
                 first_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (product_uid, pincode)
             )
         """)
 
-        # 3. Alert Logs (to avoid sending duplicate notifications within the same period)
+        # Safe migrations for existing databases
+        try:
+            cursor.execute("ALTER TABLE product_history ADD COLUMN last_alert_date TEXT")
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            cursor.execute("ALTER TABLE product_history ADD COLUMN category_bucket TEXT")
+        except sqlite3.OperationalError:
+            pass
+
+        # 3. Alert Logs
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS alert_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -226,21 +239,27 @@ def get_product_history(product_uid: str, pincode: str) -> Optional[Dict[str, An
         return dict(row) if row else None
 
 
-def upsert_product_history(product: Dict[str, Any], pincode: str) -> None:
+def upsert_product_history(
+    product: Dict[str, Any],
+    pincode: str,
+    last_alert_date: Optional[str] = None
+) -> None:
     """Inserts or updates product price history record."""
     uid = product.get("uid") or product.get("url") or product.get("name")
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    category_bucket = product.get("category_bucket") or ""
     
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO product_history (
-                product_uid, pincode, name, brand, effective_price, mrp,
-                discount_pct, savings, in_stock, url, quantity, first_seen_at, last_seen_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                product_uid, pincode, name, brand, category_bucket, effective_price, mrp,
+                discount_pct, savings, in_stock, url, quantity, last_alert_date, first_seen_at, last_seen_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(product_uid, pincode) DO UPDATE SET
                 name = excluded.name,
                 brand = excluded.brand,
+                category_bucket = CASE WHEN excluded.category_bucket != '' THEN excluded.category_bucket ELSE product_history.category_bucket END,
                 effective_price = excluded.effective_price,
                 mrp = excluded.mrp,
                 discount_pct = excluded.discount_pct,
@@ -248,12 +267,14 @@ def upsert_product_history(product: Dict[str, Any], pincode: str) -> None:
                 in_stock = excluded.in_stock,
                 url = excluded.url,
                 quantity = excluded.quantity,
+                last_alert_date = COALESCE(excluded.last_alert_date, product_history.last_alert_date),
                 last_seen_at = excluded.last_seen_at
         """, (
             uid,
             pincode,
             product.get("name", ""),
             product.get("brand", ""),
+            category_bucket,
             product.get("effective_price", 0.0),
             product.get("mrp", 0.0),
             product.get("discount_pct", 0.0),
@@ -261,9 +282,24 @@ def upsert_product_history(product: Dict[str, Any], pincode: str) -> None:
             1 if product.get("in_stock", True) else 0,
             product.get("url", ""),
             product.get("quantity", ""),
+            last_alert_date,
             now,
             now
         ))
+        conn.commit()
+
+
+def mark_products_alerted(product_uids: List[str], pincode: str, alert_date: str) -> None:
+    """Updates the last_alert_date for a batch of products in a pincode."""
+    if not product_uids:
+        return
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.executemany("""
+            UPDATE product_history
+            SET last_alert_date = ?
+            WHERE product_uid = ? AND pincode = ?
+        """, [(alert_date, uid, pincode) for uid in product_uids])
         conn.commit()
 
 

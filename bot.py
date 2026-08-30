@@ -44,7 +44,7 @@ from database import (
     get_unique_active_pincodes,
     get_users_by_pincode
 )
-from deal_differ import analyze_and_update_deals, DiffType
+from deal_differ import analyze_and_update_deals, group_products_by_category, DiffType
 
 # Load .env if present
 def load_env(filepath: str = ".env") -> None:
@@ -93,7 +93,6 @@ def call_telegram_api(method: str, params: Optional[Dict[str, Any]] = None) -> O
             res_body = response.read().decode("utf-8")
             return json.loads(res_body)
     except Exception as e:
-        # print error for debugging
         return None
 
 
@@ -103,8 +102,7 @@ def send_message(
     parse_mode: str = "HTML",
     disable_web_page_preview: bool = True
 ) -> bool:
-    """Sends a Telegram message to a specific chat/user."""
-    # Chunk message if it exceeds Telegram 4096 char limit
+    """Sends a Telegram message to a specific chat/user with clean chunking."""
     if len(text) <= 4000:
         chunks = [text]
     else:
@@ -133,16 +131,17 @@ def send_message(
     return success
 
 
-# --- Deal Formatting Helpers ---
+# --- Category-Grouped Deal Formatting Helpers ---
 
 def format_deals_list(
     products: List[Dict[str, Any]],
     location_title: str,
     pincode: str,
-    header_subtitle: str = "Top Discount Deals",
+    header_title: str = "JioMart Top Deals",
+    header_subtitle: str = "",
     include_diff_tag: bool = False
 ) -> str:
-    """Formats a list of products into a clean Telegram HTML message."""
+    """Formats products into visually grouped category sections."""
     if not products:
         return f"🛒 <b>JioMart Deals</b>\n\nNo matching deals found for <b>{escape_html(location_title)}</b> (PIN: <code>{pincode}</code>)."
 
@@ -150,45 +149,59 @@ def format_deals_list(
     ist_now = utc_now + datetime.timedelta(hours=5, minutes=30)
     time_str = ist_now.strftime("%d %b, %I:%M %p IST")
 
+    grouped = group_products_by_category(products)
+    total_count = len(products)
+    total_savings = sum(p.get("savings", 0.0) for p in products)
+    avg_discount = sum(p.get("discount_pct", 0.0) for p in products) / total_count if total_count else 0.0
+
+    sub_line = f"\n🎯 <i>{escape_html(header_subtitle)}</i>" if header_subtitle else ""
+
     msg = (
-        f"🔥 <b>JioMart Deals — {escape_html(header_subtitle)}</b>\n"
+        f"🔥 <b>{escape_html(header_title)}</b>\n"
         f"📍 <b>Location:</b> {escape_html(location_title)} (PIN: <code>{pincode}</code>)\n"
-        f"🕒 <b>Updated:</b> {time_str}\n"
+        f"🕒 <b>Updated:</b> {time_str}{sub_line}\n"
         f"{'═' * 32}\n\n"
     )
 
-    for idx, p in enumerate(products, 1):
-        name = escape_html(p.get("name", "Product"))
-        brand = escape_html(p.get("brand", ""))
-        price = p.get("effective_price", 0.0)
-        mrp = p.get("mrp", 0.0)
-        disc = p.get("discount_pct", 0.0)
-        savings = p.get("savings", 0.0)
-        url = p.get("url", "")
-        qty = escape_html(p.get("quantity", ""))
-        diff_tag = p.get("diff_tag")
+    item_idx = 1
+    for bucket_name, bucket_items in grouped.items():
+        if not bucket_items:
+            continue
+        msg += f"<b>{bucket_name} ({len(bucket_items)} Deals)</b>\n"
+        for p in bucket_items:
+            name = escape_html(p.get("name", "Product"))
+            brand = escape_html(p.get("brand", ""))
+            price = p.get("effective_price", 0.0)
+            mrp = p.get("mrp", 0.0)
+            disc = p.get("discount_pct", 0.0)
+            savings = p.get("savings", 0.0)
+            url = p.get("url", "")
+            qty = escape_html(p.get("quantity", ""))
+            diff_tag = p.get("diff_tag")
 
-        brand_prefix = f"<b>{brand}</b> - " if brand and brand.lower() != "jiomart" else ""
-        badge_str = f" (📦 <i>{qty}</i>)" if qty else ""
+            brand_prefix = f"<b>{brand}</b> - " if brand and brand.lower() != "jiomart" else ""
+            badge_str = f" (📦 <i>{qty}</i>)" if qty else ""
+            tag_str = f" 🏷️ <i>[{diff_tag}]</i>" if (include_diff_tag and diff_tag) else ""
 
-        tag_line = f"   🏷️ <b>[{diff_tag}]</b>\n" if (include_diff_tag and diff_tag) else ""
+            if url:
+                title_line = f"<b>{item_idx}.</b> <a href=\"{url}\">{brand_prefix}{name}</a>{badge_str}{tag_str}"
+            else:
+                title_line = f"<b>{item_idx}.</b> {brand_prefix}{name}{badge_str}{tag_str}"
 
-        if url:
-            title_line = f"<b>{idx}.</b> <a href=\"{url}\">{brand_prefix}{name}</a>{badge_str}"
-        else:
-            title_line = f"<b>{idx}.</b> {brand_prefix}{name}{badge_str}"
+            price_line = (
+                f"   💰 <b>₹{price:,.2f}</b> <s>₹{mrp:,.2f}</s> "
+                f"| 💥 <b>{disc:.1f}% OFF</b> (Save ₹{savings:,.2f})"
+            )
 
-        price_line = (
-            f"   💰 <b>₹{price:,.2f}</b> <s>₹{mrp:,.2f}</s> "
-            f"| 💥 <b>{disc:.1f}% OFF</b> (Save ₹{savings:,.2f})"
-        )
-
-        msg += f"{title_line}\n{tag_line}{price_line}\n\n"
+            msg += f"{title_line}\n{price_line}\n"
+            item_idx += 1
+        msg += "\n"
 
     msg += (
         f"{'═' * 32}\n"
-        f"⚡ <i>Direct from JioMart Vertex API (Ad-Free)</i>\n"
-        f"💡 <i>Tip: Run /deals anytime to refresh on-demand.</i>"
+        f"📊 <b>Summary:</b> {total_count} Deals across {len(grouped)} Categories | Avg: <b>{avg_discount:.1f}% OFF</b>\n"
+        f"💵 <b>Total Potential Savings:</b> ₹{total_savings:,.2f}\n"
+        f"⚡ <i>Direct from JioMart Vertex API (Ad-Free)</i>"
     )
     return msg
 
@@ -291,7 +304,8 @@ def handle_fetch_deals(user_id: int, target_pincode: Optional[str] = None) -> No
         products=products[:display_limit],
         location_title=city,
         pincode=pincode,
-        header_subtitle=f"Top Deals across 5 Pages (≥{min_discount:.0f}% OFF)"
+        header_title="JioMart Top Deals",
+        header_subtitle=f"Across 5 Pages (≥{min_discount:.0f}% OFF)"
     )
     send_message(user_id, msg)
 
@@ -324,7 +338,7 @@ def handle_settings(user_id: int) -> None:
         f"📮 <b>PIN Code:</b> <code>{pincode}</code>\n"
         f"📍 <b>City:</b> {escape_html(city)}\n"
         f"🎯 <b>Min Discount:</b> {min_disc:.0f}%\n"
-        f"🔔 <b>Scheduled Broadcasts:</b> {'✅ Active' if is_active else '⏸️ Paused'}\n\n"
+        f"🔔 <b>Scheduled Broadcasts:</b> {'✅ Active (5x Daily)' if is_active else '⏸️ Paused'}\n\n"
         f"<b>Commands to modify:</b>\n"
         f"• <code>/pincode &lt;pin&gt;</code> — Change location\n"
         f"• <code>/mindiscount &lt;pct&gt;</code> — Change discount threshold\n"
@@ -338,20 +352,22 @@ def handle_toggle_pause(user_id: int, pause: bool) -> None:
     if pause:
         send_message(user_id, "⏸️ <b>Scheduled alerts paused.</b> You will not receive automated daily broadcasts. Type <code>/resume</code> to re-enable anytime.")
     else:
-        send_message(user_id, "🔔 <b>Scheduled alerts resumed!</b> You will receive updates at 12:05 AM, 6 AM, 12 PM, 4 PM, and 8 PM IST.")
+        send_message(user_id, "🔔 <b>Scheduled alerts resumed!</b> You will receive updates at 12:05 AM (Daily Digest) and 6 AM, 12 PM, 4 PM, 8 PM (Flash Deals).")
 
 
 def handle_help(user_id: int) -> None:
     text = (
         f"📖 <b>JioMart Deals Hunter — Commands</b>\n\n"
-        f"• <code>/deals</code> — Get top deals for your saved PIN\n"
+        f"• <code>/deals</code> — Get top deals for your saved PIN (Categorized)\n"
         f"• <code>/deals &lt;pin&gt;</code> — Search deals for any other PIN\n"
         f"• <code>/pincode &lt;pin&gt;</code> — Update your delivery location\n"
         f"• <code>/mindiscount &lt;pct&gt;</code> — Filter by minimum discount (e.g. 70)\n"
         f"• <code>/settings</code> — View your current profile & preferences\n"
         f"• <code>/pause</code> — Mute automated scheduled alerts\n"
         f"• <code>/resume</code> — Unmute scheduled alerts\n\n"
-        f"⚡ <i>Broadcast Schedule: 12:05 AM, 6:00 AM, 12:00 PM, 4:00 PM & 8:00 PM IST</i>"
+        f"⏰ <b>Broadcast Schedule:</b>\n"
+        f"• <b>12:05 AM IST:</b> Daily Master Digest (All Top Deals)\n"
+        f"• <b>6 AM, 12 PM, 4 PM, 8 PM IST:</b> Flash Alerts (New Price Drops Only)"
     )
     send_message(user_id, text)
 
@@ -404,26 +420,28 @@ def process_telegram_update(update: Dict[str, Any]) -> None:
     elif cmd in ["/help", "help", "?"]:
         handle_help(user_id)
     else:
-        # Default guidance
         send_message(user_id, "💡 Send <code>/deals</code> to view current deals or <code>/help</code> for available commands.")
 
 
 # --- Background Scheduler (5x Daily IST: 12:05am, 6am, 12pm, 4pm, 8pm) ---
 
 SCHEDULED_TIMES_IST = [
-    (0, 5),   # 12:05 AM IST
-    (6, 0),   # 06:00 AM IST
-    (12, 0),  # 12:00 PM IST
-    (16, 0),  # 04:00 PM IST
-    (20, 0)   # 08:00 PM IST
+    (0, 5),   # 12:05 AM IST (Daily Master Digest)
+    (6, 0),   # 06:00 AM IST (Flash Delta)
+    (12, 0),  # 12:00 PM IST (Flash Delta)
+    (16, 0),  # 04:00 PM IST (Flash Delta)
+    (20, 0)   # 08:00 PM IST (Flash Delta)
 ]
 
-def run_scheduled_broadcast() -> None:
+def run_scheduled_broadcast(is_master_digest: bool = False) -> None:
     """
     Executes a scheduled broadcast across all registered unique pincodes.
-    Uses smart deal diffing to only send newly detected deals, price drops, or restocks.
+    - 12:05 AM IST (Master Digest): Resets daily tracker and sends full top deals.
+    - 6am/12pm/4pm/8pm (Flash Delta): Only sends fresh price drops/restocks today.
     """
-    print(f"\n{Colors.CYAN}⏰ Running Scheduled Deal Broadcast across unique pincodes...{Colors.RESET}")
+    digest_type_str = "Daily Master Digest (12:05 AM)" if is_master_digest else "Intra-Day Flash Delta"
+    print(f"\n{Colors.CYAN}⏰ Running Scheduled Broadcast [{digest_type_str}] across unique pincodes...{Colors.RESET}")
+    
     pincodes = get_unique_active_pincodes()
     if not pincodes:
         print("No active subscribed users found.")
@@ -450,30 +468,40 @@ def run_scheduled_broadcast() -> None:
             city = fetcher.location_info.get("city", "Your City")
 
             # Run diff against historical records
-            changed_deals, stale_deals = analyze_and_update_deals(products, pin)
-            print(f"PIN {pin}: {len(products)} total items across 5 pages | {len(changed_deals)} changes | {len(stale_deals)} stale items filtered out.")
+            changed_deals, stale_deals = analyze_and_update_deals(products, pin, is_master_digest=is_master_digest)
+            print(f"PIN {pin}: {len(products)} total items | {len(changed_deals)} active deals | {len(stale_deals)} stale items filtered out.")
 
             if not changed_deals:
-                print(f"PIN {pin}: No new deal changes or price drops. Skipping broadcast to avoid spam.")
+                print(f"PIN {pin}: No deal changes or price drops. Skipping broadcast to avoid spam.")
                 continue
 
-            # Broadcast changes to each user matching their min_discount threshold
+            # Broadcast to each user matching their min_discount threshold
             for u in users:
                 user_min_disc = u.get("min_discount", 60.0)
-                user_deals = [d for d in changed_deals if d.get("discount_pct", 0) >= user_min_disc][:15]
+                user_deals = [d for d in changed_deals if d.get("discount_pct", 0) >= user_min_disc][:20]
 
                 if not user_deals:
                     continue
+
+                if is_master_digest:
+                    header_title = "JioMart Daily Deals Digest"
+                    header_sub = f"Daily Top Picks across 5 Pages (≥{user_min_disc:.0f}% OFF)"
+                    include_diff_tag = False
+                else:
+                    header_title = "JioMart Flash Deals"
+                    header_sub = "⚡ Fresh Price Drops & New Items Today"
+                    include_diff_tag = True
 
                 msg = format_deals_list(
                     products=user_deals,
                     location_title=city,
                     pincode=pin,
-                    header_subtitle="🔥 New Deals & Price Drops",
-                    include_diff_tag=True
+                    header_title=header_title,
+                    header_subtitle=header_sub,
+                    include_diff_tag=include_diff_tag
                 )
                 send_message(u["user_id"], msg)
-                print(f"✓ Sent {len(user_deals)} fresh deals to User ID: {u['user_id']}")
+                print(f"✓ Sent {len(user_deals)} categorized deals to User ID: {u['user_id']}")
 
         except Exception as e:
             print(f"{Colors.RED}Error processing scheduled deals for PIN {pin}: {e}{Colors.RESET}")
@@ -495,7 +523,8 @@ def scheduler_worker() -> None:
             for h, m in SCHEDULED_TIMES_IST:
                 if curr_hour == h and curr_min == m and last_triggered_slot != current_slot:
                     last_triggered_slot = current_slot
-                    run_scheduled_broadcast()
+                    is_master = (h == 0 and m == 5)
+                    run_scheduled_broadcast(is_master_digest=is_master)
                     break
 
         except Exception as e:
