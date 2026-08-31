@@ -84,6 +84,13 @@ load_env()
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 
+# Global runtime diagnostics for /status and Render live logs
+BOT_START_TIME = datetime.datetime.now(datetime.timezone.utc)
+LAST_CRON_PING_TIME: Optional[str] = None
+TOTAL_CRON_PINGS: int = 0
+LAST_BROADCAST_TIME: Optional[str] = None
+LAST_BROADCAST_INFO: str = "Pending first interval run"
+
 
 # --- Telegram API Client ---
 
@@ -510,6 +517,54 @@ def handle_toggle_pause(user_id: int, pause: bool) -> None:
         send_message(user_id, "🔔 <b>Scheduled alerts resumed!</b> You will receive updates at 12:05 AM (Daily Digest) and 6 AM, 12 PM, 4 PM, 8 PM (Flash Deals).")
 
 
+def handle_status(user_id: int) -> None:
+    """Displays real-time cloud health, cron pings, next interval, and last run result."""
+    user = get_user(user_id)
+    utc_now = datetime.datetime.now(datetime.timezone.utc)
+    ist_now = utc_now + datetime.timedelta(hours=5, minutes=30)
+
+    # Calculate uptime
+    uptime_delta = utc_now - BOT_START_TIME
+    hours, rem = divmod(int(uptime_delta.total_seconds()), 3600)
+    minutes, seconds = divmod(rem, 60)
+    uptime_str = f"{hours}h {minutes}m {seconds}s"
+
+    pincode = user.get("pincode") if user else "Not set"
+    city = user.get("city") if user else "Not set"
+    is_active = bool(user.get("is_active", 1)) if user else False
+
+    # Next upcoming interval
+    curr_hour = ist_now.hour
+    curr_min = ist_now.minute
+    next_slot = "12:05 AM (Tomorrow)"
+    for h, m in SCHEDULED_TIMES_IST:
+        if (h > curr_hour) or (h == curr_hour and m > curr_min):
+            ampm = "AM" if h < 12 else "PM"
+            disp_h = h if (1 <= h <= 12) else (h - 12 if h > 12 else 12)
+            next_slot = f"{disp_h:02d}:{m:02d} {ampm} IST"
+            break
+
+    ping_str = LAST_CRON_PING_TIME or "Waiting for ping from cron-job.org"
+    bcast_str = LAST_BROADCAST_TIME or "Pending next scheduled trigger"
+
+    msg = (
+        f"📊 <b>JioMart Deals Hunter — Status Dashboard</b>\n\n"
+        f"🤖 <b>Bot Engine:</b> 🟢 <b>Online & Healthy</b>\n"
+        f"⏱️ <b>Uptime:</b> {uptime_str}\n"
+        f"🕒 <b>Current Time:</b> {ist_now.strftime('%d %b, %I:%M %p IST')}\n\n"
+        f"🌐 <b>Cloud Server (Render):</b>\n"
+        f"• Keep-Alive Pings: <b>{TOTAL_CRON_PINGS} received</b>\n"
+        f"• Last Ping: <i>{escape_html(ping_str)}</i>\n\n"
+        f"⏰ <b>Scheduled Broadcasts:</b> {'✅ Active (5x Daily)' if is_active else '⏸️ Paused'}\n"
+        f"• Next Trigger: <b>{next_slot}</b>\n"
+        f"• Last Run Time: <i>{escape_html(bcast_str)}</i>\n"
+        f"• Last Result: <i>{escape_html(LAST_BROADCAST_INFO)}</i>\n\n"
+        f"📍 <b>Your Saved Location:</b> {escape_html(city)} (PIN: <code>{pincode}</code>)\n\n"
+        f"⚡ <i>Tip: Send /deals anytime for instant top picks.</i>"
+    )
+    send_message(user_id, msg, reply_markup=get_categories_inline_keyboard())
+
+
 def handle_help(user_id: int) -> None:
     text = (
         f"📖 <b>JioMart Deals Hunter — Commands & Shortcuts</b>\n\n"
@@ -523,10 +578,11 @@ def handle_help(user_id: int) -> None:
         f"• <code>/beauty</code> or <code>/personal</code> — Personal Care deals\n"
         f"• <code>/electronics</code> — Gadgets & Electronics\n"
         f"• <code>/search &lt;item&gt;</code> — Search any keyword (e.g. <code>/search ghee</code>)\n\n"
-        f"<b>Settings:</b>\n"
+        f"<b>Settings & Diagnostics:</b>\n"
+        f"• <code>/status</code> — View bot health, cron pings & next alert time\n"
+        f"• <code>/settings</code> — View current profile\n"
         f"• <code>/pincode &lt;pin&gt;</code> — Update delivery location\n"
         f"• <code>/mindiscount &lt;pct&gt;</code> — Filter by minimum discount (e.g. 70)\n"
-        f"• <code>/settings</code> — View current profile\n"
         f"• <code>/pause</code> / <code>/resume</code> — Toggle scheduled alerts\n\n"
         f"⏰ <b>Broadcast Schedule:</b>\n"
         f"• <b>12:05 AM IST:</b> Daily Master Digest (All Top Deals)\n"
@@ -544,6 +600,7 @@ def register_bot_commands() -> None:
         {"command": "more", "description": "⏩ Browse next 15 deals"},
         {"command": "categories", "description": "📂 Interactive category buttons"},
         {"command": "search", "description": "🔍 Search items (e.g. /search atta)"},
+        {"command": "status", "description": "📊 Bot health, pings & next alert time"},
         {"command": "pincode", "description": "📍 Change delivery PIN code"},
         {"command": "mindiscount", "description": "🎯 Set minimum discount filter"},
         {"command": "settings", "description": "⚙️ View location & preferences"},
@@ -667,6 +724,8 @@ def process_telegram_update(update: Dict[str, Any]) -> None:
         send_message(user_id, "🎯 Please specify discount percentage. Example: <code>/mindiscount 70</code>")
     elif cmd == "/settings":
         handle_settings(user_id)
+    elif cmd in ["/status", "/ping", "/health"]:
+        handle_status(user_id)
     elif cmd == "/pause":
         handle_toggle_pause(user_id, pause=True)
     elif cmd == "/resume":
@@ -681,6 +740,7 @@ def process_telegram_update(update: Dict[str, Any]) -> None:
             "• <code>/categories</code> — Browse specific categories\n"
             "• <code>/more</code> — Browse next 15 deals\n"
             "• <code>/search &lt;item&gt;</code> — Search products (e.g. <code>/search ghee</code>)\n"
+            "• <code>/status</code> — View bot uptime, cron pings & next alert\n"
             "• Send your <b>6-digit PIN code</b> to update delivery location"
         )
         send_message(user_id, guidance, reply_markup=get_categories_inline_keyboard())
@@ -702,16 +762,23 @@ def run_scheduled_broadcast(is_master_digest: bool = False) -> None:
     - 12:05 AM IST (Master Digest): Resets daily tracker and sends full top deals.
     - 6am/12pm/4pm/8pm (Flash Delta): Only sends fresh price drops/restocks today.
     """
+    global LAST_BROADCAST_TIME, LAST_BROADCAST_INFO
+    utc_now = datetime.datetime.now(datetime.timezone.utc)
+    ist_now = utc_now + datetime.timedelta(hours=5, minutes=30)
+    LAST_BROADCAST_TIME = ist_now.strftime("%d %b, %I:%M %p IST")
+
     digest_type_str = "Daily Master Digest (12:05 AM)" if is_master_digest else "Intra-Day Flash Delta"
-    print(f"\n{Colors.CYAN}⏰ Running Scheduled Broadcast [{digest_type_str}] across unique pincodes...{Colors.RESET}")
+    print(f"\n[{ist_now.strftime('%I:%M:%S %p IST')}] ⏰ Running Scheduled Broadcast [{digest_type_str}] across unique pincodes...")
     
     pincodes = get_unique_active_pincodes()
     if not pincodes:
-        print("No active subscribed users found.")
+        print(f"[{ist_now.strftime('%I:%M:%S %p IST')}] No active subscribed users found in database.")
+        LAST_BROADCAST_INFO = "No subscribed users in DB"
         return
 
-    print(f"Subscribed Pincodes: {pincodes}")
+    print(f"[{ist_now.strftime('%I:%M:%S %p IST')}] Subscribed Pincodes: {pincodes}")
 
+    total_broadcast_sent = 0
     for pin in pincodes:
         users = get_users_by_pincode(pin)
         if not users:
@@ -733,10 +800,10 @@ def run_scheduled_broadcast(is_master_digest: bool = False) -> None:
 
             # Run diff against historical records
             changed_deals, stale_deals = analyze_and_update_deals(products, pin, is_master_digest=is_master_digest)
-            print(f"PIN {pin}: {len(products)} total items | {len(changed_deals)} active deals | {len(stale_deals)} stale items filtered out.")
+            print(f"[{ist_now.strftime('%I:%M:%S %p IST')}] PIN {pin}: {len(products)} total items | {len(changed_deals)} active deals | {len(stale_deals)} stale items filtered out.")
 
             if not changed_deals:
-                print(f"PIN {pin}: No deal changes or price drops. Skipping broadcast to avoid spam.")
+                print(f"[{ist_now.strftime('%I:%M:%S %p IST')}] PIN {pin}: No deal changes or price drops since last run. Skipping broadcast to avoid spam.")
                 continue
 
             # Broadcast to each user matching their min_discount threshold
@@ -769,10 +836,16 @@ def run_scheduled_broadcast(is_master_digest: bool = False) -> None:
                     msg,
                     reply_markup=get_more_inline_keyboard()
                 )
-                print(f"✓ Sent {len(user_deals)} categorized deals to User ID: {u['user_id']}")
+                total_broadcast_sent += len(user_deals)
+                print(f"[{ist_now.strftime('%I:%M:%S %p IST')}] ✓ Sent {len(user_deals)} deals to User ID: {u['user_id']} ({u.get('first_name', 'User')})")
 
         except Exception as e:
-            print(f"{Colors.RED}Error processing scheduled deals for PIN {pin}: {e}{Colors.RESET}")
+            print(f"[{ist_now.strftime('%I:%M:%S %p IST')}] Error processing scheduled deals for PIN {pin}: {e}")
+
+    if total_broadcast_sent > 0:
+        LAST_BROADCAST_INFO = f"Broadcasted {total_broadcast_sent} deals ({digest_type_str})"
+    else:
+        LAST_BROADCAST_INFO = f"Catalog evaluated: 0 new price drops (Skipped to avoid spam)"
 
 
 def scheduler_worker() -> None:
@@ -798,7 +871,7 @@ def scheduler_worker() -> None:
         except Exception as e:
             print(f"Scheduler worker exception: {e}")
 
-        time.sleep(30)
+        time.sleep(25)
 
 
 # --- HTTP Health Check Server (For Free Render / Koyeb Web Services) ---
@@ -814,10 +887,18 @@ def start_health_server() -> None:
 
         class HealthHandler(BaseHTTPRequestHandler):
             def do_GET(self):
+                global LAST_CRON_PING_TIME, TOTAL_CRON_PINGS
+                TOTAL_CRON_PINGS += 1
+                utc_now = datetime.datetime.now(datetime.timezone.utc)
+                ist_now = utc_now + datetime.timedelta(hours=5, minutes=30)
+                LAST_CRON_PING_TIME = ist_now.strftime("%d %b, %I:%M:%S %p IST")
+
                 self.send_response(200)
-                self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
                 self.end_headers()
-                self.wfile.write(b"JioMart Telegram Bot is running healthy!\n")
+                response_text = f"JioMart Telegram Bot is Running Healthy!\nLast Ping: {LAST_CRON_PING_TIME}\nTotal Pings: {TOTAL_CRON_PINGS}\n"
+                self.wfile.write(response_text.encode("utf-8"))
+                print(f"[{ist_now.strftime('%I:%M:%S %p IST')}] 🌐 Keep-Alive Ping #{TOTAL_CRON_PINGS} from cron-job.org (200 OK)")
 
             def log_message(self, format, *args):
                 pass
