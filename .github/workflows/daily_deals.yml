@@ -1,18 +1,18 @@
-name: JioMart Scheduled Deal Broadcasts
+# Automated 5x daily scheduled broadcasts (12:05am, 6am, 12pm, 4pm, 8pm IST)
+# and live on-demand clicks (/deals, /more, /search) are handled 24/7 by bot.py on Render
+# kept awake via cron-job.org.
+#
+# This workflow is kept for optional manual testing via the GitHub Actions UI.
+
+name: JioMart Deal Broadcaster (Manual Dispatch)
 
 on:
-  schedule:
-    # 12:05 AM IST = 18:35 UTC (previous day)
-    - cron: '35 18 * * *'
-    # 06:00 AM IST = 00:30 UTC
-    - cron: '30 0 * * *'
-    # 12:00 PM IST = 06:30 UTC
-    - cron: '30 6 * * *'
-    # 04:00 PM IST = 10:30 UTC
-    - cron: '30 10 * * *'
-    # 08:00 PM IST = 14:30 UTC
-    - cron: '30 14 * * *'
-  workflow_dispatch: # Allows manual trigger from GitHub web interface anytime
+  workflow_dispatch: # Manual run only (no automated cron triggers)
+    inputs:
+      min_discount:
+        description: 'Minimum Discount %'
+        required: false
+        default: '60'
 
 jobs:
   broadcast-deals:
