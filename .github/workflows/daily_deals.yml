@@ -1,25 +1,39 @@
-# This single-user GitHub Actions workflow has been replaced by the dynamic multi-user
-# 24/7 Bot (bot.py) running on Render / Cloud.
-# 
-# Scheduled broadcasts for all users (12:05am, 6am, 12pm, 4pm, 8pm IST) are handled
-# automatically by bot.py's internal scheduler.
-#
-# If you ever want to run a manual single-user broadcast via GitHub Actions, uncomment
-# the trigger below and configure TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in GitHub Secrets.
-
-name: JioMart Single User Alert (Optional / Inactive)
+name: JioMart Scheduled Deal Broadcasts
 
 on:
-  workflow_dispatch: # Manual run only (no automated cron triggers)
-    inputs:
-      min_discount:
-        description: 'Minimum Discount %'
-        required: false
-        default: '60'
+  schedule:
+    # 12:05 AM IST = 18:35 UTC (previous day)
+    - cron: '35 18 * * *'
+    # 06:00 AM IST = 00:30 UTC
+    - cron: '30 0 * * *'
+    # 12:00 PM IST = 06:30 UTC
+    - cron: '30 6 * * *'
+    # 04:00 PM IST = 10:30 UTC
+    - cron: '30 10 * * *'
+    # 08:00 PM IST = 14:30 UTC
+    - cron: '30 14 * * *'
+  workflow_dispatch: # Allows manual trigger from GitHub web interface anytime
 
 jobs:
-  info:
+  broadcast-deals:
     runs-on: ubuntu-latest
     steps:
-      - name: Note
-        run: echo "Automated multi-user broadcasts are handled directly by bot.py on Render."
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Run Multi-User Deal Broadcaster
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          python broadcast_runner.py

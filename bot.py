@@ -168,8 +168,19 @@ def send_message(
 
 # --- Interactive Keyboards ---
 
-def get_deals_inline_keyboard(active_cat: str = "cat_all") -> Dict[str, Any]:
-    """Generates clean inline buttons for category filtering and pagination."""
+def get_more_inline_keyboard() -> Dict[str, Any]:
+    """Shows only the /more button below deals."""
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "⏩ Next 15 Deals (/more)", "callback_data": "action_more"}
+            ]
+        ]
+    }
+
+
+def get_categories_inline_keyboard() -> Dict[str, Any]:
+    """Generates clean category selection buttons (for /categories only)."""
     return {
         "inline_keyboard": [
             [
@@ -185,7 +196,6 @@ def get_deals_inline_keyboard(active_cat: str = "cat_all") -> Dict[str, Any]:
                 {"text": "🎁 Festive & General", "callback_data": "cat_general"}
             ],
             [
-                {"text": "⏩ Next 15 Deals (/more)", "callback_data": "action_more"},
                 {"text": "🔥 All Top Deals", "callback_data": "cat_all"}
             ]
         ]
@@ -202,7 +212,7 @@ def format_deals_list(
     header_subtitle: str = "",
     include_diff_tag: bool = False
 ) -> str:
-    """Formats products into visually grouped category sections."""
+    """Formats products into clean, uncluttered visual sections with 'Click here' links."""
     if not products:
         return f"🛒 <b>JioMart Deals</b>\n\nNo matching deals found for <b>{escape_html(location_title)}</b> (PIN: <code>{pincode}</code>)."
 
@@ -228,7 +238,7 @@ def format_deals_list(
     for bucket_name, bucket_items in grouped.items():
         if not bucket_items:
             continue
-        msg += f"<b>{bucket_name} ({len(bucket_items)} Deals)</b>\n"
+        msg += f"<b>{bucket_name}</b>\n"
         for p in bucket_items:
             name = escape_html(p.get("name", "Product"))
             brand = escape_html(p.get("brand", ""))
@@ -244,24 +254,18 @@ def format_deals_list(
             badge_str = f" (📦 <i>{qty}</i>)" if qty else ""
             tag_str = f" 🏷️ <i>[{diff_tag}]</i>" if (include_diff_tag and diff_tag) else ""
 
-            if url:
-                title_line = f"<b>{item_idx}.</b> <a href=\"{url}\">{brand_prefix}{name}</a>{badge_str}{tag_str}"
-            else:
-                title_line = f"<b>{item_idx}.</b> {brand_prefix}{name}{badge_str}{tag_str}"
+            title_line = f"<b>{item_idx}.</b> {brand_prefix}{name}{badge_str}{tag_str}"
 
-            price_line = (
-                f"   💰 <b>₹{price:,.2f}</b> <s>₹{mrp:,.2f}</s> "
-                f"| 💥 <b>{disc:.1f}% OFF</b> (Save ₹{savings:,.2f})"
-            )
+            link_str = f" | 👉 <a href=\"{url}\">Click here</a>" if url else ""
+            price_line = f"   💰 <b>₹{price:,.2f}</b> <s>₹{mrp:,.2f}</s> (💥 <b>{disc:.0f}% OFF</b>){link_str}"
 
-            msg += f"{title_line}\n{price_line}\n"
+            msg += f"{title_line}\n{price_line}\n\n"
             item_idx += 1
         msg += "\n"
 
     msg += (
         f"{'═' * 32}\n"
-        f"📊 <b>Summary:</b> {total_count} Deals across {len(grouped)} Categories | Avg: <b>{avg_discount:.1f}% OFF</b>\n"
-        f"💵 <b>Total Potential Savings:</b> ₹{total_savings:,.2f}\n"
+        f"📊 <b>Summary:</b> {total_count} Deals | Avg: <b>{avg_discount:.0f}% OFF</b> | Save ₹{total_savings:,.0f}\n"
         f"⚡ <i>Direct from JioMart Vertex API (Ad-Free)</i>"
     )
     return msg
@@ -287,7 +291,7 @@ def handle_start(user_id: int, username: str, first_name: str) -> None:
             f"• <code>/mindiscount &lt;%&gt;</code> — Change discount filter\n"
             f"• <code>/pause</code> / <code>/resume</code> — Toggle automated alerts"
         )
-        send_message(user_id, text, reply_markup=get_deals_inline_keyboard())
+        send_message(user_id, text, reply_markup=get_categories_inline_keyboard())
     else:
         save_or_update_user(user_id=user_id, username=username, first_name=first_name)
         text = (
@@ -445,7 +449,7 @@ def handle_fetch_deals(
     send_message(
         user_id,
         msg,
-        reply_markup=get_deals_inline_keyboard(active_cat=category_code)
+        reply_markup=get_more_inline_keyboard()
     )
 
 
@@ -495,7 +499,7 @@ def handle_settings(user_id: int) -> None:
         f"• <code>/mindiscount &lt;pct&gt;</code> — Change discount threshold\n"
         f"• <code>/pause</code> / <code>/resume</code> — Toggle automated alerts"
     )
-    send_message(user_id, text, reply_markup=get_deals_inline_keyboard())
+    send_message(user_id, text, reply_markup=get_categories_inline_keyboard())
 
 
 def handle_toggle_pause(user_id: int, pause: bool) -> None:
@@ -510,8 +514,9 @@ def handle_help(user_id: int) -> None:
     text = (
         f"📖 <b>JioMart Deals Hunter — Commands & Shortcuts</b>\n\n"
         f"<b>Deals & Categories:</b>\n"
-        f"• <code>/deals</code> — Top deals with interactive category buttons\n"
+        f"• <code>/deals</code> — Top deals for your location\n"
         f"• <code>/more</code> — Browse next 15 deals (Pages 6–10, 11–15...)\n"
+        f"• <code>/categories</code> — Show category selection buttons\n"
         f"• <code>/atta</code> or <code>/rice</code> or <code>/oil</code> — Atta, Rice, Dal & Oil deals\n"
         f"• <code>/snacks</code> or <code>/dryfruits</code> — Dry Fruits & Snacks deals\n"
         f"• <code>/kitchen</code> or <code>/home</code> — Kitchen & Cookware deals\n"
@@ -527,7 +532,7 @@ def handle_help(user_id: int) -> None:
         f"• <b>12:05 AM IST:</b> Daily Master Digest (All Top Deals)\n"
         f"• <b>6 AM, 12 PM, 4 PM, 8 PM IST:</b> Flash Alerts (New Price Drops Only)"
     )
-    send_message(user_id, text, reply_markup=get_deals_inline_keyboard())
+    send_message(user_id, text, reply_markup=get_categories_inline_keyboard())
 
 
 # --- Bot Commands Registration (Native Telegram Menu Button) ---
@@ -594,8 +599,8 @@ def process_telegram_update(update: Dict[str, Any]) -> None:
     if any(k in message for k in non_text_types):
         send_message(
             user_id,
-            "⚠️ <b>Media uploads are not supported.</b>\n\nPlease select an option from the <b>Menu ☰</b> or tap a category button below:",
-            reply_markup=get_deals_inline_keyboard()
+            "⚠️ <b>Media uploads are not supported.</b>\n\nPlease select an option from the <b>Menu ☰</b> or tap /categories below:",
+            reply_markup=get_categories_inline_keyboard()
         )
         return
 
@@ -650,7 +655,7 @@ def process_telegram_update(update: Dict[str, Any]) -> None:
     elif cmd in ["/electronics", "/gadgets"]:
         handle_fetch_deals(user_id, category_code="cat_electronics", page_start=1)
     elif cmd in ["/categories", "/cat"]:
-        send_message(user_id, "📂 <b>Select a Category below:</b>", reply_markup=get_deals_inline_keyboard())
+        send_message(user_id, "📂 <b>Select a Category below:</b>", reply_markup=get_categories_inline_keyboard())
     elif cmd == "/search" and len(parts) > 1:
         query_str = " ".join(parts[1:])
         handle_fetch_deals(user_id, query=query_str, page_start=1)
@@ -673,11 +678,12 @@ def process_telegram_update(update: Dict[str, Any]) -> None:
         guidance = (
             "💡 <b>Please choose an option from the Menu ☰ or tap a category below:</b>\n\n"
             "• <code>/deals</code> — Top deals across all categories\n"
+            "• <code>/categories</code> — Browse specific categories\n"
             "• <code>/more</code> — Browse next 15 deals\n"
             "• <code>/search &lt;item&gt;</code> — Search products (e.g. <code>/search ghee</code>)\n"
             "• Send your <b>6-digit PIN code</b> to update delivery location"
         )
-        send_message(user_id, guidance, reply_markup=get_deals_inline_keyboard())
+        send_message(user_id, guidance, reply_markup=get_categories_inline_keyboard())
 
 
 # --- Background Scheduler (5x Daily IST: 12:05am, 6am, 12pm, 4pm, 8pm) ---
@@ -712,7 +718,7 @@ def run_scheduled_broadcast(is_master_digest: bool = False) -> None:
             continue
 
         try:
-            fetcher = JioMartProductFetcher(pincode=pin)
+            fetcher = get_cached_fetcher(pin)
             result = fetcher.fetch_products(
                 department="groceries",
                 sort_on="discount_dsc",
@@ -761,7 +767,7 @@ def run_scheduled_broadcast(is_master_digest: bool = False) -> None:
                 send_message(
                     u["user_id"],
                     msg,
-                    reply_markup=get_deals_inline_keyboard()
+                    reply_markup=get_more_inline_keyboard()
                 )
                 print(f"✓ Sent {len(user_deals)} categorized deals to User ID: {u['user_id']}")
 
