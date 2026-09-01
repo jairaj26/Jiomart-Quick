@@ -893,12 +893,25 @@ def start_health_server() -> None:
                 ist_now = utc_now + datetime.timedelta(hours=5, minutes=30)
                 LAST_CRON_PING_TIME = ist_now.strftime("%d %b, %I:%M:%S %p IST")
 
+                body = b"OK"
                 self.send_response(200)
-                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Connection", "close")
                 self.end_headers()
-                response_text = f"JioMart Telegram Bot is Running Healthy!\nLast Ping: {LAST_CRON_PING_TIME}\nTotal Pings: {TOTAL_CRON_PINGS}\n"
-                self.wfile.write(response_text.encode("utf-8"))
+                try:
+                    self.wfile.write(body)
+                except Exception:
+                    pass
                 print(f"[{ist_now.strftime('%I:%M:%S %p IST')}] 🌐 Keep-Alive Ping #{TOTAL_CRON_PINGS} from cron-job.org (200 OK)")
+
+            def do_HEAD(self):
+                body = b"OK"
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Connection", "close")
+                self.end_headers()
 
             def log_message(self, format, *args):
                 pass
