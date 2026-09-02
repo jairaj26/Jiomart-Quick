@@ -209,7 +209,7 @@ def get_categories_inline_keyboard() -> Dict[str, Any]:
     }
 
 
-# --- Category-Grouped Deal Formatting Helpers ---
+# --- Clean Deal Formatting Helpers ---
 
 def format_deals_list(
     products: List[Dict[str, Any]],
@@ -219,63 +219,42 @@ def format_deals_list(
     header_subtitle: str = "",
     include_diff_tag: bool = False
 ) -> str:
-    """Formats products into clean, uncluttered visual sections with 'Click here' links."""
+    """Formats products into a clean, minimal linear list without clutter."""
     if not products:
-        return f"🛒 <b>JioMart Deals</b>\n\nNo matching deals found for <b>{escape_html(location_title)}</b> (PIN: <code>{pincode}</code>)."
+        return f"🔥 <b>JioMart Deals</b>\n\nNo matching deals found for <b>{escape_html(location_title)}</b> (PIN: <code>{pincode}</code>)."
 
     utc_now = datetime.datetime.now(datetime.timezone.utc)
     ist_now = utc_now + datetime.timedelta(hours=5, minutes=30)
     time_str = ist_now.strftime("%d %b, %I:%M %p IST")
 
-    grouped = group_products_by_category(products)
-    total_count = len(products)
-    total_savings = sum(p.get("savings", 0.0) for p in products)
-    avg_discount = sum(p.get("discount_pct", 0.0) for p in products) / total_count if total_count else 0.0
-
-    sub_line = f"\n🎯 <i>{escape_html(header_subtitle)}</i>" if header_subtitle else ""
+    sub_line = f"\n<i>{escape_html(header_subtitle)}</i>" if header_subtitle else ""
 
     msg = (
         f"🔥 <b>{escape_html(header_title)}</b>\n"
-        f"📍 <b>Location:</b> {escape_html(location_title)} (PIN: <code>{pincode}</code>)\n"
-        f"🕒 <b>Updated:</b> {time_str}{sub_line}\n"
-        f"{'═' * 32}\n\n"
+        f"Location: {escape_html(location_title)} (PIN: <code>{pincode}</code>)\n"
+        f"Updated: {time_str}{sub_line}\n"
+        f"{'═' * 18}\n\n"
     )
 
-    item_idx = 1
-    for bucket_name, bucket_items in grouped.items():
-        if not bucket_items:
-            continue
-        msg += f"<b>{bucket_name}</b>\n"
-        for p in bucket_items:
-            name = escape_html(p.get("name", "Product"))
-            brand = escape_html(p.get("brand", ""))
-            price = p.get("effective_price", 0.0)
-            mrp = p.get("mrp", 0.0)
-            disc = p.get("discount_pct", 0.0)
-            savings = p.get("savings", 0.0)
-            url = p.get("url", "")
-            qty = escape_html(p.get("quantity", ""))
-            diff_tag = p.get("diff_tag")
+    for item_idx, p in enumerate(products, 1):
+        name = escape_html(p.get("name", "Product"))
+        brand = escape_html(p.get("brand", ""))
+        price = p.get("effective_price", 0.0)
+        mrp = p.get("mrp", 0.0)
+        disc = p.get("discount_pct", 0.0)
+        url = p.get("url", "")
+        diff_tag = p.get("diff_tag")
 
-            brand_prefix = f"<b>{brand}</b> - " if brand and brand.lower() != "jiomart" else ""
-            badge_str = f" (📦 <i>{qty}</i>)" if qty else ""
-            tag_str = f" 🏷️ <i>[{diff_tag}]</i>" if (include_diff_tag and diff_tag) else ""
+        brand_prefix = f"<b>{brand}</b> - " if brand and brand.lower() != "jiomart" else ""
+        tag_str = f" <i>[{diff_tag}]</i>" if (include_diff_tag and diff_tag) else ""
 
-            title_line = f"<b>{item_idx}.</b> {brand_prefix}{name}{badge_str}{tag_str}"
+        title_line = f"<b>{item_idx}.</b> {brand_prefix}{name}{tag_str}"
+        link_str = f" | <a href=\"{url}\">Click here</a>" if url else ""
+        price_line = f"   💰 <b>₹{price:,.2f}</b> <s>₹{mrp:,.2f}</s> (<b>{disc:.0f}% OFF</b>){link_str}"
 
-            link_str = f" | 👉 <a href=\"{url}\">Click here</a>" if url else ""
-            price_line = f"   💰 <b>₹{price:,.2f}</b> <s>₹{mrp:,.2f}</s> (💥 <b>{disc:.0f}% OFF</b>){link_str}"
+        msg += f"{title_line}\n{price_line}\n\n"
 
-            msg += f"{title_line}\n{price_line}\n\n"
-            item_idx += 1
-        msg += "\n"
-
-    msg += (
-        f"{'═' * 32}\n"
-        f"📊 <b>Summary:</b> {total_count} Deals | Avg: <b>{avg_discount:.0f}% OFF</b> | Save ₹{total_savings:,.0f}\n"
-        f"⚡ <i>Direct from JioMart Vertex API (Ad-Free)</i>"
-    )
-    return msg
+    return msg.strip()
 
 
 # --- Bot Command Handlers ---
