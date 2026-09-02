@@ -883,7 +883,7 @@ def start_health_server() -> None:
         return
 
     try:
-        from http.server import HTTPServer, BaseHTTPRequestHandler
+        from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
         class HealthHandler(BaseHTTPRequestHandler):
             def do_GET(self):
@@ -895,12 +895,13 @@ def start_health_server() -> None:
 
                 body = b"OK"
                 self.send_response(200)
-                self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
                 self.send_header("Connection", "close")
                 self.end_headers()
                 try:
                     self.wfile.write(body)
+                    self.wfile.flush()
                 except Exception:
                     pass
                 print(f"[{ist_now.strftime('%I:%M:%S %p IST')}] 🌐 Keep-Alive Ping #{TOTAL_CRON_PINGS} from cron-job.org (200 OK)")
@@ -908,7 +909,7 @@ def start_health_server() -> None:
             def do_HEAD(self):
                 body = b"OK"
                 self.send_response(200)
-                self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
                 self.send_header("Connection", "close")
                 self.end_headers()
@@ -917,8 +918,8 @@ def start_health_server() -> None:
                 pass
 
         port = int(port_str)
-        server = HTTPServer(("0.0.0.0", port), HealthHandler)
-        print(f"{Colors.CYAN}🌐 Health-check server listening on port {port} for Free Web Service{Colors.RESET}")
+        server = ThreadingHTTPServer(("0.0.0.0", port), HealthHandler)
+        print(f"{Colors.CYAN}🌐 Multi-Threaded Health-check server listening on port {port} for Free Web Service{Colors.RESET}")
         server_thread = threading.Thread(target=server.serve_forever, daemon=True)
         server_thread.start()
     except Exception as e:
