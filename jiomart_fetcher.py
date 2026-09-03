@@ -20,6 +20,7 @@ import sys
 import json
 import argparse
 import time
+import random
 import urllib.parse
 from typing import Dict, List, Any, Optional, Tuple
 
@@ -446,6 +447,8 @@ class JioMartProductFetcher:
                 break
 
             current_page += 1
+            # Add polite randomized jitter delay (0.5s - 1.1s) to prevent HTTP 429 rate limit errors
+            time.sleep(random.uniform(0.5, 1.1))
 
         elapsed = time.time() - start_time
         return {

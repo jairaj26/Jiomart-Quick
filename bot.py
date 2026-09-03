@@ -386,9 +386,9 @@ def handle_fetch_deals(
     result = fetcher.fetch_products(
         department=department,
         sort_on="discount_dsc",
-        limit=25,
+        limit=50,
         page_start=page_start,
-        max_pages=3,
+        max_pages=5,
         query=api_query,
         min_discount=effective_min_discount if (not query or effective_min_discount < 50.0) else None,
         in_stock_only=True
@@ -407,7 +407,7 @@ def handle_fetch_deals(
     changed, stale = analyze_and_update_deals(all_products, pincode)
 
     cat_title = CATEGORY_MAP.get(category_code, "Top Deals")
-    page_range_str = f"Page {page_start}–{page_start + 2}" if page_start > 1 else "Top Deals"
+    page_range_str = f"Page {page_start}–{page_start + 4}" if page_start > 1 else "Top Deals"
 
     if query:
         header_title = f"Search: '{escape_html(query)}'"
