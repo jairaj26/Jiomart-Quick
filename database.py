@@ -95,6 +95,26 @@ def init_db() -> None:
             )
         """)
 
+        # 4. User Blocked Keywords
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_blocked_keywords (
+                user_id INTEGER,
+                keyword TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, keyword)
+            )
+        """)
+
+        # 5. Persistent Scheduler Execution History (prevents duplicate runs & timing drifts)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS scheduler_history (
+                slot_key TEXT PRIMARY KEY,
+                executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                deals_sent INTEGER DEFAULT 0,
+                info TEXT
+            )
+        """)
+
         conn.commit()
 
 
@@ -341,6 +361,84 @@ def mark_products_alerted(product_uids: List[str], pincode: str, alert_date: str
             SET last_alert_date = ?
             WHERE product_uid = ? AND pincode = ?
         """, [(alert_date, uid, pincode) for uid in product_uids])
+        conn.commit()
+
+
+# --- Blocked Keywords Operations ---
+
+DEFAULT_BLOCKED_KEYWORDS = ["rakhi", "pooja", "puja", "agarbatti", "dhoop"]
+
+
+def add_blocked_keyword(user_id: int, keyword: str) -> bool:
+    """Adds a keyword to the user's blocked filter list."""
+    kw = keyword.strip().lower()
+    if not kw:
+        return False
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT OR IGNORE INTO user_blocked_keywords (user_id, keyword)
+            VALUES (?, ?)
+        """, (user_id, kw))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def remove_blocked_keyword(user_id: int, keyword: str) -> bool:
+    """Removes a keyword from the user's blocked filter list."""
+    kw = keyword.strip().lower()
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            DELETE FROM user_blocked_keywords
+            WHERE user_id = ? AND keyword = ?
+        """, (user_id, kw))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def get_blocked_keywords(user_id: int) -> List[str]:
+    """Retrieves all blocked keywords for a user, initializing defaults if none set."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT keyword FROM user_blocked_keywords
+            WHERE user_id = ?
+            ORDER BY keyword ASC
+        """, (user_id,))
+        rows = cursor.fetchall()
+        if rows:
+            return [r["keyword"] for r in rows]
+
+        # Initialize defaults for this user
+        for def_kw in DEFAULT_BLOCKED_KEYWORDS:
+            cursor.execute("""
+                INSERT OR IGNORE INTO user_blocked_keywords (user_id, keyword)
+                VALUES (?, ?)
+            """, (user_id, def_kw))
+        conn.commit()
+        return list(DEFAULT_BLOCKED_KEYWORDS)
+
+
+# --- Scheduler Execution History Operations ---
+
+def is_slot_executed(slot_key: str) -> bool:
+    """Checks if a scheduled broadcast slot has already run today."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 FROM scheduler_history WHERE slot_key = ?", (slot_key,))
+        return cursor.fetchone() is not None
+
+
+def record_slot_execution(slot_key: str, deals_sent: int = 0, info: str = "") -> None:
+    """Records a completed scheduled slot in history to prevent duplicate runs."""
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT OR REPLACE INTO scheduler_history (slot_key, executed_at, deals_sent, info)
+            VALUES (?, ?, ?, ?)
+        """, (slot_key, now, deals_sent, info))
         conn.commit()
 
 

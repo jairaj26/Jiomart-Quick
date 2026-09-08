@@ -44,7 +44,12 @@ from database import (
     toggle_user_active,
     get_all_active_users,
     get_unique_active_pincodes,
-    get_users_by_pincode
+    get_users_by_pincode,
+    add_blocked_keyword,
+    remove_blocked_keyword,
+    get_blocked_keywords,
+    is_slot_executed,
+    record_slot_execution
 )
 from deal_differ import (
     analyze_and_update_deals,
@@ -209,7 +214,21 @@ def get_categories_inline_keyboard() -> Dict[str, Any]:
     }
 
 
-# --- Clean Deal Formatting Helpers ---
+# --- Keyword Filtering & Clean Deal Formatting Helpers ---
+
+def filter_blocked_products(products: List[Dict[str, Any]], blocked_keywords: List[str]) -> List[Dict[str, Any]]:
+    """Filters out any product containing any blocked keyword in name or brand."""
+    if not blocked_keywords:
+        return products
+    clean = []
+    for p in products:
+        name = (p.get("name") or "").lower()
+        brand = (p.get("brand") or "").lower()
+        if any(kw in name or kw in brand for kw in blocked_keywords):
+            continue
+        clean.append(p)
+    return clean
+
 
 def format_deals_list(
     products: List[Dict[str, Any]],
@@ -368,7 +387,7 @@ def handle_fetch_deals(
     send_chat_action(user_id, "typing")
 
     user_min_discount = user.get("min_discount", 60.0) if user else 60.0
-    display_limit = user.get("deal_limit", 15) if user else 15
+    display_limit = user.get("deal_limit", 20) if user else 20
 
     # Update navigation state in DB
     set_user_nav_state(user_id, page=page_start, category=category_code, query=query or "")
@@ -386,9 +405,9 @@ def handle_fetch_deals(
     result = fetcher.fetch_products(
         department=department,
         sort_on="discount_dsc",
-        limit=50,
+        limit=70,
         page_start=page_start,
-        max_pages=5,
+        max_pages=7,
         query=api_query,
         min_discount=effective_min_discount if (not query or effective_min_discount < 50.0) else None,
         in_stock_only=True
@@ -403,11 +422,15 @@ def handle_fetch_deals(
     else:
         products = all_products
 
+    # Apply user's blocked keywords filter (e.g. rakhi, pooja)
+    blocked_kws = get_blocked_keywords(user_id)
+    products = filter_blocked_products(products, blocked_kws)
+
     # Analyze & update database history
     changed, stale = analyze_and_update_deals(all_products, pincode)
 
     cat_title = CATEGORY_MAP.get(category_code, "Top Deals")
-    page_range_str = f"Page {page_start}–{page_start + 4}" if page_start > 1 else "Top Deals"
+    page_range_str = f"Pages {page_start}–{page_start + 6}" if page_start > 1 else "Top Deals"
 
     if query:
         header_title = f"Search: '{escape_html(query)}'"
@@ -440,9 +463,9 @@ def handle_fetch_deals(
 
 
 def handle_more_deals(user_id: int) -> None:
-    """Fetches the next batch of deals (Pages 6-10, 11-15, etc.)."""
+    """Fetches the next batch of deals (Pages 8-14, 15-21, etc.)."""
     curr_page, curr_cat, curr_query = get_user_nav_state(user_id)
-    next_page = curr_page + 5
+    next_page = curr_page + 7
     handle_fetch_deals(
         user_id,
         category_code=curr_cat or "cat_all",
@@ -516,7 +539,7 @@ def handle_status(user_id: int) -> None:
     curr_hour = ist_now.hour
     curr_min = ist_now.minute
     next_slot = "12:05 AM (Tomorrow)"
-    for h, m in SCHEDULED_TIMES_IST:
+    for slot_name, h, m, _ in SCHEDULED_SLOTS:
         if (h > curr_hour) or (h == curr_hour and m > curr_min):
             ampm = "AM" if h < 12 else "PM"
             disp_h = h if (1 <= h <= 12) else (h - 12 if h > 12 else 12)
@@ -544,12 +567,49 @@ def handle_status(user_id: int) -> None:
     send_message(user_id, msg, reply_markup=get_categories_inline_keyboard())
 
 
+def handle_block_keyword(user_id: int, keyword: str) -> None:
+    kw = keyword.strip().lower()
+    if not kw:
+        send_message(user_id, "⚠️ Please specify a keyword to block. Example: <code>/block rakhi</code> or <code>/block pooja</code>")
+        return
+    add_blocked_keyword(user_id, kw)
+    send_message(user_id, f"🚫 <b>Blocked keyword:</b> <code>{escape_html(kw)}</code>\n\nProducts matching this keyword will be filtered out from your deals.\nView your list anytime with <code>/blocked</code>.")
+
+
+def handle_unblock_keyword(user_id: int, keyword: str) -> None:
+    kw = keyword.strip().lower()
+    if not kw:
+        send_message(user_id, "⚠️ Please specify a keyword to unblock. Example: <code>/unblock rakhi</code>")
+        return
+    removed = remove_blocked_keyword(user_id, kw)
+    if removed:
+        send_message(user_id, f"✅ <b>Unblocked:</b> <code>{escape_html(kw)}</code>\n\nProducts with this keyword can now appear in your deals.")
+    else:
+        send_message(user_id, f"ℹ️ <code>{escape_html(kw)}</code> was not in your blocked keywords list.")
+
+
+def handle_list_blocked(user_id: int) -> None:
+    kws = get_blocked_keywords(user_id)
+    if not kws:
+        send_message(user_id, "🛡️ <b>You currently have no blocked keywords.</b>\n\nTo block an item keyword, send <code>/block &lt;word&gt;</code> (e.g. <code>/block rakhi</code> or <code>/block pooja</code>).")
+        return
+    kw_list_str = "\n".join(f"• <code>{escape_html(k)}</code>" for k in kws)
+    msg = (
+        f"🛡️ <b>Your Blocked Keywords:</b>\n\n"
+        f"{kw_list_str}\n\n"
+        f"<b>Commands:</b>\n"
+        f"• <code>/block &lt;keyword&gt;</code> — Block a keyword (e.g. <code>/block clock</code>)\n"
+        f"• <code>/unblock &lt;keyword&gt;</code> — Unblock a keyword"
+    )
+    send_message(user_id, msg)
+
+
 def handle_help(user_id: int) -> None:
     text = (
         f"📖 <b>JioMart Deals Hunter — Commands & Shortcuts</b>\n\n"
         f"<b>Deals & Categories:</b>\n"
         f"• <code>/deals</code> — Top deals for your location\n"
-        f"• <code>/more</code> — Browse next 15 deals (Pages 6–10, 11–15...)\n"
+        f"• <code>/more</code> — Browse next 7 pages\n"
         f"• <code>/categories</code> — Show category selection buttons\n"
         f"• <code>/atta</code> or <code>/rice</code> or <code>/oil</code> — Atta, Rice, Dal & Oil deals\n"
         f"• <code>/snacks</code> or <code>/dryfruits</code> — Dry Fruits & Snacks deals\n"
@@ -557,15 +617,19 @@ def handle_help(user_id: int) -> None:
         f"• <code>/beauty</code> or <code>/personal</code> — Personal Care deals\n"
         f"• <code>/electronics</code> — Gadgets & Electronics\n"
         f"• <code>/search &lt;item&gt;</code> — Search any keyword (e.g. <code>/search ghee</code>)\n\n"
+        f"<b>Filters & Blocklist:</b>\n"
+        f"• <code>/blocked</code> — View your blocked keywords list\n"
+        f"• <code>/block &lt;keyword&gt;</code> — Block an item (e.g. <code>/block rakhi</code>)\n"
+        f"• <code>/unblock &lt;keyword&gt;</code> — Unblock a keyword\n"
+        f"• <code>/mindiscount &lt;pct&gt;</code> — Filter by minimum discount (e.g. 70)\n\n"
         f"<b>Settings & Diagnostics:</b>\n"
         f"• <code>/status</code> — View bot health, cron pings & next alert time\n"
         f"• <code>/settings</code> — View current profile\n"
         f"• <code>/pincode &lt;pin&gt;</code> — Update delivery location\n"
-        f"• <code>/mindiscount &lt;pct&gt;</code> — Filter by minimum discount (e.g. 70)\n"
         f"• <code>/pause</code> / <code>/resume</code> — Toggle scheduled alerts\n\n"
         f"⏰ <b>Broadcast Schedule:</b>\n"
         f"• <b>12:05 AM IST:</b> Daily Master Digest (All Top Deals)\n"
-        f"• <b>6 AM, 12 PM, 4 PM, 8 PM IST:</b> Flash Alerts (New Price Drops Only)"
+        f"• <b>6 AM, 12 PM, 4 PM, 8 PM IST:</b> Flash Deals"
     )
     send_message(user_id, text, reply_markup=get_categories_inline_keyboard())
 
@@ -576,9 +640,12 @@ def register_bot_commands() -> None:
     """Registers bot commands with Telegram API so the native 'Menu' popup button appears."""
     commands = [
         {"command": "deals", "description": "🔥 Top deals across categories"},
-        {"command": "more", "description": "⏩ Browse next 15 deals"},
+        {"command": "more", "description": "⏩ Browse next 7 pages"},
         {"command": "categories", "description": "📂 Interactive category buttons"},
         {"command": "search", "description": "🔍 Search items (e.g. /search atta)"},
+        {"command": "blocked", "description": "🛡️ View & manage blocked keywords"},
+        {"command": "block", "description": "🚫 Block a keyword (e.g. /block rakhi)"},
+        {"command": "unblock", "description": "✅ Unblock a keyword"},
         {"command": "status", "description": "📊 Bot health, pings & next alert time"},
         {"command": "pincode", "description": "📍 Change delivery PIN code"},
         {"command": "mindiscount", "description": "🎯 Set minimum discount filter"},
@@ -705,6 +772,16 @@ def process_telegram_update(update: Dict[str, Any]) -> None:
         handle_settings(user_id)
     elif cmd in ["/status", "/ping", "/health"]:
         handle_status(user_id)
+    elif cmd == "/block" and len(parts) > 1:
+        handle_block_keyword(user_id, " ".join(parts[1:]))
+    elif cmd == "/block":
+        send_message(user_id, "⚠️ Please specify a keyword to block. Example: <code>/block rakhi</code> or <code>/block pooja</code>")
+    elif cmd == "/unblock" and len(parts) > 1:
+        handle_unblock_keyword(user_id, " ".join(parts[1:]))
+    elif cmd == "/unblock":
+        send_message(user_id, "⚠️ Please specify a keyword to unblock. Example: <code>/unblock rakhi</code>")
+    elif cmd in ["/blocked", "/blocklist", "/blocks"]:
+        handle_list_blocked(user_id)
     elif cmd == "/pause":
         handle_toggle_pause(user_id, pause=True)
     elif cmd == "/resume":
@@ -717,8 +794,9 @@ def process_telegram_update(update: Dict[str, Any]) -> None:
             "💡 <b>Please choose an option from the Menu ☰ or tap a category below:</b>\n\n"
             "• <code>/deals</code> — Top deals across all categories\n"
             "• <code>/categories</code> — Browse specific categories\n"
-            "• <code>/more</code> — Browse next 15 deals\n"
+            "• <code>/more</code> — Browse next 7 pages\n"
             "• <code>/search &lt;item&gt;</code> — Search products (e.g. <code>/search ghee</code>)\n"
+            "• <code>/blocked</code> — Manage blocked keywords (e.g. rakhi, pooja)\n"
             "• <code>/status</code> — View bot uptime, cron pings & next alert\n"
             "• Send your <b>6-digit PIN code</b> to update delivery location"
         )
@@ -727,32 +805,34 @@ def process_telegram_update(update: Dict[str, Any]) -> None:
 
 # --- Background Scheduler (5x Daily IST: 12:05am, 6am, 12pm, 4pm, 8pm) ---
 
-SCHEDULED_TIMES_IST = [
-    (0, 5),   # 12:05 AM IST (Daily Master Digest)
-    (6, 0),   # 06:00 AM IST (Flash Delta)
-    (12, 0),  # 12:00 PM IST (Flash Delta)
-    (16, 0),  # 04:00 PM IST (Flash Delta)
-    (20, 0)   # 08:00 PM IST (Flash Delta)
+SCHEDULED_SLOTS = [
+    ("00:05", 0, 5, True),    # 12:05 AM IST (Daily Master Digest)
+    ("06:00", 6, 0, False),   # 06:00 AM IST (Flash Deals)
+    ("12:00", 12, 0, False),  # 12:00 PM IST (Flash Deals)
+    ("16:00", 16, 0, False),  # 04:00 PM IST (Flash Deals)
+    ("20:00", 20, 0, False),  # 08:00 PM IST (Flash Deals)
 ]
 
-def run_scheduled_broadcast(is_master_digest: bool = False) -> None:
+def run_scheduled_broadcast(is_master_digest: bool = False, slot_key: Optional[str] = None) -> None:
     """
     Executes a scheduled broadcast across all registered unique pincodes.
     - 12:05 AM IST (Master Digest): Resets daily tracker and sends full top deals.
-    - 6am/12pm/4pm/8pm (Flash Delta): Only sends fresh price drops/restocks today.
+    - 6am/12pm/4pm/8pm (Flash Deals): Sends fresh price drops or current active top deals.
     """
     global LAST_BROADCAST_TIME, LAST_BROADCAST_INFO
     utc_now = datetime.datetime.now(datetime.timezone.utc)
     ist_now = utc_now + datetime.timedelta(hours=5, minutes=30)
     LAST_BROADCAST_TIME = ist_now.strftime("%d %b, %I:%M %p IST")
 
-    digest_type_str = "Daily Master Digest (12:05 AM)" if is_master_digest else "Intra-Day Flash Delta"
+    digest_type_str = "Daily Master Digest (12:05 AM)" if is_master_digest else "Flash Deals"
     print(f"\n[{ist_now.strftime('%I:%M:%S %p IST')}] ⏰ Running Scheduled Broadcast [{digest_type_str}] across unique pincodes...")
-    
+
     pincodes = get_unique_active_pincodes()
     if not pincodes:
         print(f"[{ist_now.strftime('%I:%M:%S %p IST')}] No active subscribed users found in database.")
         LAST_BROADCAST_INFO = "No subscribed users in DB"
+        if slot_key:
+            record_slot_execution(slot_key, deals_sent=0, info=LAST_BROADCAST_INFO)
         return
 
     print(f"[{ist_now.strftime('%I:%M:%S %p IST')}] Subscribed Pincodes: {pincodes}")
@@ -768,9 +848,9 @@ def run_scheduled_broadcast(is_master_digest: bool = False) -> None:
             result = fetcher.fetch_products(
                 department="groceries",
                 sort_on="discount_dsc",
-                limit=60,
+                limit=120,
                 page_start=1,
-                max_pages=5,
+                max_pages=7,
                 min_discount=50.0,
                 in_stock_only=True
             )
@@ -781,29 +861,35 @@ def run_scheduled_broadcast(is_master_digest: bool = False) -> None:
             changed_deals, stale_deals = analyze_and_update_deals(products, pin, is_master_digest=is_master_digest)
             print(f"[{ist_now.strftime('%I:%M:%S %p IST')}] PIN {pin}: {len(products)} total items | {len(changed_deals)} active deals | {len(stale_deals)} stale items filtered out.")
 
-            if not changed_deals:
-                print(f"[{ist_now.strftime('%I:%M:%S %p IST')}] PIN {pin}: No deal changes or price drops since last run. Skipping broadcast to avoid spam.")
-                continue
-
             # Broadcast to each user matching their min_discount threshold
             for u in users:
                 user_min_disc = u.get("min_discount", 60.0)
-                user_deals = [d for d in changed_deals if d.get("discount_pct", 0) >= user_min_disc][:20]
+                # Prioritize new price drops; if none changed, fallback to active top deals
+                candidate_pool = changed_deals if (is_master_digest or changed_deals) else products
+                user_deals = [d for d in candidate_pool if d.get("discount_pct", 0) >= user_min_disc]
 
-                if not user_deals:
+                # Filter out user's blocked keywords (e.g. rakhi, pooja)
+                user_blocked_kws = get_blocked_keywords(u["user_id"])
+                clean_user_deals = filter_blocked_products(user_deals, user_blocked_kws)[:20]
+
+                if not clean_user_deals:
                     continue
 
                 if is_master_digest:
                     header_title = "JioMart Daily Deals Digest"
-                    header_sub = f"Daily Top Picks across 5 Pages (≥{user_min_disc:.0f}% OFF)"
+                    header_sub = f"Daily Top Picks across 7 Pages (≥{user_min_disc:.0f}% OFF)"
                     include_diff_tag = False
+                elif changed_deals:
+                    header_title = "JioMart Flash Deals"
+                    header_sub = "⚡ Fresh Price Drops & Restocks"
+                    include_diff_tag = True
                 else:
                     header_title = "JioMart Flash Deals"
-                    header_sub = "⚡ Fresh Price Drops & New Items Today"
-                    include_diff_tag = True
+                    header_sub = f"⚡ Top Active Deals (≥{user_min_disc:.0f}% OFF)"
+                    include_diff_tag = False
 
                 msg = format_deals_list(
-                    products=user_deals,
+                    products=clean_user_deals,
                     location_title=city,
                     pincode=pin,
                     header_title=header_title,
@@ -815,8 +901,8 @@ def run_scheduled_broadcast(is_master_digest: bool = False) -> None:
                     msg,
                     reply_markup=get_more_inline_keyboard()
                 )
-                total_broadcast_sent += len(user_deals)
-                print(f"[{ist_now.strftime('%I:%M:%S %p IST')}] ✓ Sent {len(user_deals)} deals to User ID: {u['user_id']} ({u.get('first_name', 'User')})")
+                total_broadcast_sent += len(clean_user_deals)
+                print(f"[{ist_now.strftime('%I:%M:%S %p IST')}] ✓ Sent {len(clean_user_deals)} deals to User ID: {u['user_id']} ({u.get('first_name', 'User')})")
 
         except Exception as e:
             print(f"[{ist_now.strftime('%I:%M:%S %p IST')}] Error processing scheduled deals for PIN {pin}: {e}")
@@ -824,33 +910,41 @@ def run_scheduled_broadcast(is_master_digest: bool = False) -> None:
     if total_broadcast_sent > 0:
         LAST_BROADCAST_INFO = f"Broadcasted {total_broadcast_sent} deals ({digest_type_str})"
     else:
-        LAST_BROADCAST_INFO = f"Catalog evaluated: 0 new price drops (Skipped to avoid spam)"
+        LAST_BROADCAST_INFO = f"Catalog evaluated: 0 deals matching threshold"
+
+    if slot_key:
+        record_slot_execution(slot_key, deals_sent=total_broadcast_sent, info=LAST_BROADCAST_INFO)
 
 
 def scheduler_worker() -> None:
-    """Continuously checks if current time matches the 5 daily IST trigger times."""
-    last_triggered_slot = None
-
+    """
+    Robust scheduler with persistent SQLite slot tracking and 45-minute recovery window.
+    Guarantees intervals are NEVER missed even if Render container boots late or sleeps.
+    """
     while True:
         try:
             utc_now = datetime.datetime.now(datetime.timezone.utc)
             ist_now = utc_now + datetime.timedelta(hours=5, minutes=30)
-            curr_hour = ist_now.hour
-            curr_min = ist_now.minute
+            today_str = ist_now.strftime("%Y-%m-%d")
 
-            current_slot = f"{curr_hour:02d}:{curr_min:02d}"
+            for slot_name, target_h, target_m, is_master in SCHEDULED_SLOTS:
+                slot_key = f"{today_str}_{slot_name}"
+                if is_slot_executed(slot_key):
+                    continue
 
-            for h, m in SCHEDULED_TIMES_IST:
-                if curr_hour == h and curr_min == m and last_triggered_slot != current_slot:
-                    last_triggered_slot = current_slot
-                    is_master = (h == 0 and m == 5)
-                    run_scheduled_broadcast(is_master_digest=is_master)
+                target_dt = ist_now.replace(hour=target_h, minute=target_m, second=0, microsecond=0)
+                diff_seconds = (ist_now - target_dt).total_seconds()
+
+                # If current time is within [0, 45 minutes] after the slot's scheduled time:
+                if 0 <= diff_seconds <= 2700:
+                    print(f"[{ist_now.strftime('%I:%M:%S %p IST')}] ⏰ Executing scheduled slot: {slot_name} (IST)...")
+                    run_scheduled_broadcast(is_master_digest=is_master, slot_key=slot_key)
                     break
 
         except Exception as e:
             print(f"Scheduler worker exception: {e}")
 
-        time.sleep(25)
+        time.sleep(20)
 
 
 # --- HTTP Health Check Server (For Free Render / Koyeb Web Services) ---
