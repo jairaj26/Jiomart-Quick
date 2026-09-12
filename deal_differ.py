@@ -120,6 +120,21 @@ def filter_by_category_code(products: List[Dict[str, Any]], cat_code: str) -> Li
     return [p for p in products if (p.get("category_bucket") or classify_category_bucket(p)) == target_bucket_name]
 
 
+PRIORITY_HOME_BRANDS = {
+    "prestige", "milton", "pigeon", "hawkins", "cello",
+    "scotch-brite", "scotch brite", "borosil", "philips",
+    "wonderchef", "bajaj", "butterfly", "treo", "tupperware", "signoraware"
+}
+
+
+def is_priority_brand(brand: str) -> bool:
+    """Checks if a brand is recognized as a reputable, high-demand household brand."""
+    if not brand:
+        return False
+    b_lower = brand.lower().strip()
+    return any(pb in b_lower for pb in PRIORITY_HOME_BRANDS)
+
+
 # --- Deal Diffing & Daily Alert Engine ---
 
 def get_current_ist_date() -> str:
@@ -133,21 +148,25 @@ def analyze_and_update_deals(
     current_products: List[Dict[str, Any]],
     pincode: str,
     is_master_digest: bool = False
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
     """
-    Compares current deals against historical database records.
+    Compares current deals against historical database records with hybrid 7-day cooldown.
     
-    Parameters:
-        current_products: List of freshly fetched products across pages.
-        pincode: Location pincode.
-        is_master_digest: True for 12:05 AM runs (all top deals sent and reset for the day).
-                          False for 6am/12pm/4pm/8pm runs (only new items/price drops sent).
+    Separates items into:
+    - main_deals: Core essentials, priority home brands, new deals, and price drops.
+    - home_deals_pool: Suppressed static Home & Kitchen items (accessible via Telegram button).
+    - pooja_deals_pool: Suppressed static Pooja & Seasonal items (accessible via Telegram button).
+    - stale_deals: Items already alerted today or without changes.
     
     Returns:
-        (changed_deals, stale_deals)
+        (main_deals, home_deals_pool, pooja_deals_pool, stale_deals)
     """
     today_date = get_current_ist_date()
-    changed_deals = []
+    today_dt = datetime.datetime.strptime(today_date, "%Y-%m-%d").date()
+
+    main_deals = []
+    home_deals_pool = []
+    pooja_deals_pool = []
     stale_deals = []
 
     for p in current_products:
@@ -155,73 +174,115 @@ def analyze_and_update_deals(
         curr_price = float(p.get("effective_price", 0.0))
         curr_disc = float(p.get("discount_pct", 0.0))
         curr_stock = bool(p.get("in_stock", True))
+        brand = p.get("brand", "")
         bucket = classify_category_bucket(p)
         p["category_bucket"] = bucket
+
+        is_home = (bucket == "🧼 Kitchen, Cookware & Cleaning")
+        is_pooja = (bucket == "🎁 Pooja, Seasonal & General")
+        is_secondary = is_home or is_pooja
+        is_prio = is_priority_brand(brand)
 
         history = get_product_history(uid, pincode)
 
         if not history:
-            # 1. Brand New Deal detected
+            # 1. Brand New Deal detected (First time seen in database)
             p_copy = dict(p)
             p_copy["diff_type"] = DiffType.NEW
             p_copy["diff_tag"] = "🆕 NEW DEAL"
             p_copy["diff_reason"] = "First time detected at high discount"
-            changed_deals.append(p_copy)
+            main_deals.append(p_copy)
+            upsert_product_history(p, pincode, last_alert_date=today_date, last_alert_price=curr_price)
 
         else:
             prev_price = float(history.get("effective_price", curr_price))
             prev_disc = float(history.get("discount_pct", curr_disc))
             prev_stock = bool(history.get("in_stock", True))
-            last_alert_date = history.get("last_alert_date")
+            last_alert_date_str = history.get("last_alert_date")
+            last_alert_price = float(history.get("last_alert_price") or prev_price)
 
-            # 2. Price Drop
-            if curr_price < (prev_price - 1.0):
-                drop_amt = prev_price - curr_price
+            days_since_alert = 999
+            if last_alert_date_str:
+                try:
+                    last_alert_dt = datetime.datetime.strptime(last_alert_date_str, "%Y-%m-%d").date()
+                    days_since_alert = (today_dt - last_alert_dt).days
+                except Exception:
+                    pass
+
+            has_price_drop = curr_price < (prev_price - 1.0) or curr_price < (last_alert_price - 1.0)
+            has_disc_increase = curr_disc >= (prev_disc + 2.0)
+            was_restocked = not prev_stock and curr_stock
+
+            # 2. Price Drop (Trigger B)
+            if has_price_drop:
+                drop_amt = min(prev_price, last_alert_price) - curr_price
                 p_copy = dict(p)
                 p_copy["diff_type"] = DiffType.PRICE_DROP
                 p_copy["diff_tag"] = f"📉 PRICE DROP (-₹{drop_amt:,.0f})"
-                p_copy["diff_reason"] = f"Dropped from ₹{prev_price:,.0f} to ₹{curr_price:,.0f}"
-                changed_deals.append(p_copy)
+                p_copy["diff_reason"] = f"Dropped from ₹{last_alert_price:,.0f} to ₹{curr_price:,.0f}"
+                main_deals.append(p_copy)
+                upsert_product_history(p, pincode, last_alert_date=today_date, last_alert_price=curr_price)
 
             # 3. Restocked Item
-            elif not prev_stock and curr_stock:
+            elif was_restocked:
                 p_copy = dict(p)
                 p_copy["diff_type"] = DiffType.RESTOCKED
                 p_copy["diff_tag"] = "🔄 BACK IN STOCK"
                 p_copy["diff_reason"] = "Previously out of stock"
-                changed_deals.append(p_copy)
+                main_deals.append(p_copy)
+                upsert_product_history(p, pincode, last_alert_date=today_date, last_alert_price=curr_price)
 
             # 4. Significant Discount Increase (+2% or more)
-            elif curr_disc >= (prev_disc + 2.0):
+            elif has_disc_increase:
                 disc_diff = curr_disc - prev_disc
                 p_copy = dict(p)
                 p_copy["diff_type"] = DiffType.DISCOUNT_UP
                 p_copy["diff_tag"] = f"💥 DISCOUNT UP (+{disc_diff:.0f}%)"
                 p_copy["diff_reason"] = f"Discount increased from {prev_disc:.0f}% to {curr_disc:.0f}%"
-                changed_deals.append(p_copy)
+                main_deals.append(p_copy)
+                upsert_product_history(p, pincode, last_alert_date=today_date, last_alert_price=curr_price)
 
-            # 5. Master Digest Reset (12:05 AM IST)
+            # 5. Hybrid 7-Day Cooldown for Non-Core Secondary Items (Home/Pooja without priority brand)
+            elif is_secondary and not is_prio:
+                if days_since_alert < 7:
+                    # Suppressed from main list -> route to dedicated category pools
+                    p_copy = dict(p)
+                    p_copy["diff_type"] = DiffType.STALE
+                    if is_home:
+                        home_deals_pool.append(p_copy)
+                    elif is_pooja:
+                        pooja_deals_pool.append(p_copy)
+                    stale_deals.append(p_copy)
+                    upsert_product_history(p, pincode)
+                else:
+                    # Trigger A: Weekly Reset (7 days passed since last alert)
+                    p_copy = dict(p)
+                    p_copy["diff_type"] = DiffType.NEW
+                    p_copy["diff_tag"] = "🗓️ WEEKLY TOP PICK"
+                    main_deals.append(p_copy)
+                    upsert_product_history(p, pincode, last_alert_date=today_date, last_alert_price=curr_price)
+
+            # 6. Core Essentials or Priority Home Brands
             elif is_master_digest:
                 p_copy = dict(p)
                 p_copy["diff_type"] = DiffType.NEW
                 p_copy["diff_tag"] = "🔥 DAILY TOP DEAL"
-                changed_deals.append(p_copy)
+                main_deals.append(p_copy)
+                upsert_product_history(p, pincode, last_alert_date=today_date, last_alert_price=curr_price)
 
-            # 6. Intra-Day Check: Was it already alerted today?
-            elif last_alert_date != today_date:
+            elif last_alert_date_str != today_date:
+                # Intra-Day: Not yet alerted today
                 p_copy = dict(p)
                 p_copy["diff_type"] = DiffType.NEW
                 p_copy["diff_tag"] = "🆕 TODAY'S DEAL"
-                changed_deals.append(p_copy)
+                main_deals.append(p_copy)
+                upsert_product_history(p, pincode, last_alert_date=today_date, last_alert_price=curr_price)
 
             else:
-                # 7. Stale / Already alerted today -> Ignored for intra-day broadcast
+                # Stale / Already alerted today in intra-day
                 p_copy = dict(p)
                 p_copy["diff_type"] = DiffType.STALE
                 stale_deals.append(p_copy)
+                upsert_product_history(p, pincode)
 
-        # Update product history in database
-        alert_date_to_set = today_date if is_master_digest else (history.get("last_alert_date") if history else today_date)
-        upsert_product_history(p, pincode, last_alert_date=alert_date_to_set)
-
-    return changed_deals, stale_deals
+    return main_deals, home_deals_pool, pooja_deals_pool, stale_deals

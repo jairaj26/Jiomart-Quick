@@ -63,6 +63,8 @@ def init_db() -> None:
                 url TEXT,
                 quantity TEXT,
                 last_alert_date TEXT,
+                last_alert_price REAL,
+                was_present_previous_cycle BOOLEAN DEFAULT 1,
                 first_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (product_uid, pincode)
@@ -72,6 +74,8 @@ def init_db() -> None:
         # Safe migrations for existing databases
         migrations = [
             "ALTER TABLE product_history ADD COLUMN last_alert_date TEXT",
+            "ALTER TABLE product_history ADD COLUMN last_alert_price REAL",
+            "ALTER TABLE product_history ADD COLUMN was_present_previous_cycle BOOLEAN DEFAULT 1",
             "ALTER TABLE product_history ADD COLUMN category_bucket TEXT",
             "ALTER TABLE users ADD COLUMN nav_page INTEGER DEFAULT 1",
             "ALTER TABLE users ADD COLUMN nav_category TEXT DEFAULT ''",
@@ -303,7 +307,8 @@ def get_product_history(product_uid: str, pincode: str) -> Optional[Dict[str, An
 def upsert_product_history(
     product: Dict[str, Any],
     pincode: str,
-    last_alert_date: Optional[str] = None
+    last_alert_date: Optional[str] = None,
+    last_alert_price: Optional[float] = None
 ) -> None:
     """Inserts or updates product price history record."""
     uid = product.get("uid") or product.get("url") or product.get("name")
@@ -315,8 +320,9 @@ def upsert_product_history(
         cursor.execute("""
             INSERT INTO product_history (
                 product_uid, pincode, name, brand, category_bucket, effective_price, mrp,
-                discount_pct, savings, in_stock, url, quantity, last_alert_date, first_seen_at, last_seen_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                discount_pct, savings, in_stock, url, quantity, last_alert_date, last_alert_price,
+                was_present_previous_cycle, first_seen_at, last_seen_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
             ON CONFLICT(product_uid, pincode) DO UPDATE SET
                 name = excluded.name,
                 brand = excluded.brand,
@@ -329,6 +335,8 @@ def upsert_product_history(
                 url = excluded.url,
                 quantity = excluded.quantity,
                 last_alert_date = COALESCE(excluded.last_alert_date, product_history.last_alert_date),
+                last_alert_price = COALESCE(excluded.last_alert_price, product_history.last_alert_price),
+                was_present_previous_cycle = 1,
                 last_seen_at = excluded.last_seen_at
         """, (
             uid,
@@ -344,6 +352,7 @@ def upsert_product_history(
             product.get("url", ""),
             product.get("quantity", ""),
             last_alert_date,
+            last_alert_price,
             now,
             now
         ))

@@ -178,17 +178,57 @@ def send_message(
     return success
 
 
-# --- Interactive Keyboards ---
+# --- Interactive Keyboards & Secondary Deals Cache ---
 
-def get_more_inline_keyboard() -> Dict[str, Any]:
-    """Shows only the /more button below deals."""
-    return {
+# User secondary deal pools cache: user_id -> {"home": [...], "pooja": [...], "city": "...", "pincode": "..."}
+USER_DEAL_POOLS: Dict[int, Dict[str, Any]] = {}
+
+
+def get_more_inline_keyboard(home_count: int = 0, pooja_count: int = 0) -> Dict[str, Any]:
+    """Generates dynamic action buttons below deals: Home/Pooja shortcuts + /more."""
+    rows = []
+    pool_row = []
+    if home_count > 0:
+        pool_row.append({"text": f"🏠 Home Deals ({home_count})", "callback_data": "pool_home"})
+    if pooja_count > 0:
+        pool_row.append({"text": f"🪔 Pooja Deals ({pooja_count})", "callback_data": "pool_pooja"})
+    if pool_row:
+        rows.append(pool_row)
+
+    rows.append([{"text": "⏩ Next 10 Pages (/more)", "callback_data": "action_more"}])
+    return {"inline_keyboard": rows}
+
+
+def handle_show_pool_deals(user_id: int, pool_key: str) -> None:
+    """Instantly displays cached secondary deals (Home or Pooja) without cluttering the main feed."""
+    pool_data = USER_DEAL_POOLS.get(user_id, {})
+    products = pool_data.get(pool_key, [])
+    city = pool_data.get("city", "Bengaluru")
+    pincode = pool_data.get("pincode", "560045")
+
+    title_map = {
+        "home": "🏠 Home, Kitchen & Cleaning Deals",
+        "pooja": "🪔 Pooja, Festive & Seasonal Deals"
+    }
+    title = title_map.get(pool_key, "Deals")
+
+    if not products:
+        send_message(user_id, f"ℹ️ No {title} currently available in this scan.")
+        return
+
+    msg = format_deals_list(
+        products=products[:25],
+        location_title=city,
+        pincode=pincode,
+        header_title=title,
+        header_subtitle=f"Showing {len(products[:25])} cached items from 10-page scan"
+    )
+    back_kb = {
         "inline_keyboard": [
-            [
-                {"text": "⏩ Next 15 Deals (/more)", "callback_data": "action_more"}
-            ]
+            [{"text": "🔥 Back to Top Deals", "callback_data": "cat_all"}]
         ]
     }
+    send_message(user_id, msg, reply_markup=back_kb)
 
 
 def get_categories_inline_keyboard() -> Dict[str, Any]:
@@ -405,9 +445,9 @@ def handle_fetch_deals(
     result = fetcher.fetch_products(
         department=department,
         sort_on="discount_dsc",
-        limit=70,
+        limit=100,
         page_start=page_start,
-        max_pages=7,
+        max_pages=10,
         query=api_query,
         min_discount=effective_min_discount if (not query or effective_min_discount < 50.0) else None,
         in_stock_only=True
@@ -416,21 +456,29 @@ def handle_fetch_deals(
     all_products = result.get("products", [])
     city = fetcher.location_info.get("city", "Bengaluru")
 
-    # If general fetch, categorize; if specific query/category, use direct results
+    # Analyze & update database history with hybrid 7-day cooldown
+    main_deals, home_pool, pooja_pool, stale = analyze_and_update_deals(all_products, pincode)
+
+    # Cache secondary category pools for instant user access via inline buttons
+    USER_DEAL_POOLS[user_id] = {
+        "home": home_pool,
+        "pooja": pooja_pool,
+        "city": city,
+        "pincode": pincode
+    }
+
+    # If general fetch, use main_deals (which suppresses static home/pooja items); if specific category, filter directly
     if category_code and category_code != "cat_all" and not api_query:
         products = filter_by_category_code(all_products, category_code)
     else:
-        products = all_products
+        products = main_deals
 
     # Apply user's blocked keywords filter (e.g. rakhi, pooja)
     blocked_kws = get_blocked_keywords(user_id)
     products = filter_blocked_products(products, blocked_kws)
 
-    # Analyze & update database history
-    changed, stale = analyze_and_update_deals(all_products, pincode)
-
     cat_title = CATEGORY_MAP.get(category_code, "Top Deals")
-    page_range_str = f"Pages {page_start}–{page_start + 6}" if page_start > 1 else "Top Deals"
+    page_range_str = f"Pages {page_start}–{page_start + 9}" if page_start > 1 else "Top Deals"
 
     if query:
         header_title = f"Search: '{escape_html(query)}'"
@@ -455,17 +503,21 @@ def handle_fetch_deals(
             header_subtitle=header_sub
         )
 
+    # Dynamic buttons: Show Home and Pooja pool shortcuts if available in this 10-page scan
+    home_count = len(home_pool) if (category_code == "cat_all" and not query) else 0
+    pooja_count = len(pooja_pool) if (category_code == "cat_all" and not query) else 0
+
     send_message(
         user_id,
         msg,
-        reply_markup=get_more_inline_keyboard()
+        reply_markup=get_more_inline_keyboard(home_count=home_count, pooja_count=pooja_count)
     )
 
 
 def handle_more_deals(user_id: int) -> None:
-    """Fetches the next batch of deals (Pages 8-14, 15-21, etc.)."""
+    """Fetches the next batch of deals (Pages 11-20, 21-30, etc.)."""
     curr_page, curr_cat, curr_query = get_user_nav_state(user_id)
-    next_page = curr_page + 7
+    next_page = curr_page + 10
     handle_fetch_deals(
         user_id,
         category_code=curr_cat or "cat_all",
@@ -609,7 +661,7 @@ def handle_help(user_id: int) -> None:
         f"📖 <b>JioMart Deals Hunter — Commands & Shortcuts</b>\n\n"
         f"<b>Deals & Categories:</b>\n"
         f"• <code>/deals</code> — Top deals for your location\n"
-        f"• <code>/more</code> — Browse next 7 pages\n"
+        f"• <code>/more</code> — Browse next 10 pages\n"
         f"• <code>/categories</code> — Show category selection buttons\n"
         f"• <code>/atta</code> or <code>/rice</code> or <code>/oil</code> — Atta, Rice, Dal & Oil deals\n"
         f"• <code>/snacks</code> or <code>/dryfruits</code> — Dry Fruits & Snacks deals\n"
@@ -640,7 +692,7 @@ def register_bot_commands() -> None:
     """Registers bot commands with Telegram API so the native 'Menu' popup button appears."""
     commands = [
         {"command": "deals", "description": "🔥 Top deals across categories"},
-        {"command": "more", "description": "⏩ Browse next 7 pages"},
+        {"command": "more", "description": "⏩ Browse next 10 pages"},
         {"command": "categories", "description": "📂 Interactive category buttons"},
         {"command": "search", "description": "🔍 Search items (e.g. /search atta)"},
         {"command": "blocked", "description": "🛡️ View & manage blocked keywords"},
@@ -670,8 +722,16 @@ def process_telegram_update(update: Dict[str, Any]) -> None:
         data = callback_query.get("data", "")
 
         # Show instant toast feedback so button stops loading immediately
-        cat_name = CATEGORY_MAP.get(data, "deals")
-        feedback_text = "⏩ Loading next page..." if data == "action_more" else f"🔍 Loading {cat_name}..."
+        if data == "action_more":
+            feedback_text = "⏩ Loading next 10 pages..."
+        elif data == "pool_home":
+            feedback_text = "🏠 Loading Home & Kitchen deals..."
+        elif data == "pool_pooja":
+            feedback_text = "🪔 Loading Pooja & Festive deals..."
+        else:
+            cat_name = CATEGORY_MAP.get(data, "deals")
+            feedback_text = f"🔍 Loading {cat_name}..."
+
         answer_callback_query(cb_id, text=feedback_text)
         send_chat_action(user_id, "typing")
 
@@ -679,6 +739,10 @@ def process_telegram_update(update: Dict[str, Any]) -> None:
             handle_more_deals(user_id)
         elif data.startswith("cat_"):
             handle_fetch_deals(user_id, category_code=data, page_start=1)
+        elif data == "pool_home":
+            handle_show_pool_deals(user_id, "home")
+        elif data == "pool_pooja":
+            handle_show_pool_deals(user_id, "pooja")
         return
 
     # 2. Handle Text Messages
@@ -848,21 +912,29 @@ def run_scheduled_broadcast(is_master_digest: bool = False, slot_key: Optional[s
             result = fetcher.fetch_products(
                 department="groceries",
                 sort_on="discount_dsc",
-                limit=120,
+                limit=150,
                 page_start=1,
-                max_pages=7,
+                max_pages=10,
                 min_discount=50.0,
                 in_stock_only=True
             )
             products = result.get("products", [])
             city = fetcher.location_info.get("city", "Your City")
 
-            # Run diff against historical records
-            changed_deals, stale_deals = analyze_and_update_deals(products, pin, is_master_digest=is_master_digest)
-            print(f"[{ist_now.strftime('%I:%M:%S %p IST')}] PIN {pin}: {len(products)} total items | {len(changed_deals)} active deals | {len(stale_deals)} stale items filtered out.")
+            # Run diff against historical records with hybrid 7-day cooldown
+            changed_deals, home_pool, pooja_pool, stale_deals = analyze_and_update_deals(products, pin, is_master_digest=is_master_digest)
+            print(f"[{ist_now.strftime('%I:%M:%S %p IST')}] PIN {pin}: {len(products)} total items | {len(changed_deals)} active deals | {len(home_pool)} home pool | {len(pooja_pool)} pooja pool | {len(stale_deals)} stale items.")
 
             # Broadcast to each user matching their min_discount threshold
             for u in users:
+                # Cache secondary pools for this user
+                USER_DEAL_POOLS[u["user_id"]] = {
+                    "home": home_pool,
+                    "pooja": pooja_pool,
+                    "city": city,
+                    "pincode": pin
+                }
+
                 user_min_disc = u.get("min_discount", 60.0)
                 # Prioritize new price drops; if none changed, fallback to active top deals
                 candidate_pool = changed_deals if (is_master_digest or changed_deals) else products
@@ -877,7 +949,7 @@ def run_scheduled_broadcast(is_master_digest: bool = False, slot_key: Optional[s
 
                 if is_master_digest:
                     header_title = "JioMart Daily Deals Digest"
-                    header_sub = f"Daily Top Picks across 7 Pages (≥{user_min_disc:.0f}% OFF)"
+                    header_sub = f"Daily Top Picks across 10 Pages (≥{user_min_disc:.0f}% OFF)"
                     include_diff_tag = False
                 elif changed_deals:
                     header_title = "JioMart Flash Deals"
@@ -899,7 +971,7 @@ def run_scheduled_broadcast(is_master_digest: bool = False, slot_key: Optional[s
                 send_message(
                     u["user_id"],
                     msg,
-                    reply_markup=get_more_inline_keyboard()
+                    reply_markup=get_more_inline_keyboard(home_count=len(home_pool), pooja_count=len(pooja_pool))
                 )
                 total_broadcast_sent += len(clean_user_deals)
                 print(f"[{ist_now.strftime('%I:%M:%S %p IST')}] ✓ Sent {len(clean_user_deals)} deals to User ID: {u['user_id']} ({u.get('first_name', 'User')})")
