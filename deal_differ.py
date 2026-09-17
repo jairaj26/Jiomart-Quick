@@ -242,46 +242,23 @@ def analyze_and_update_deals(
                 main_deals.append(p_copy)
                 upsert_product_history(p, pincode, last_alert_date=today_date, last_alert_price=curr_price)
 
-            # 5. Hybrid 7-Day Cooldown for Non-Core Secondary Items (Home/Pooja without priority brand)
-            elif is_secondary and not is_prio:
-                if days_since_alert < 7:
-                    # Suppressed from main list -> route to dedicated category pools
-                    p_copy = dict(p)
-                    p_copy["diff_type"] = DiffType.STALE
-                    if is_home:
-                        home_deals_pool.append(p_copy)
-                    elif is_pooja:
-                        pooja_deals_pool.append(p_copy)
-                    stale_deals.append(p_copy)
-                    upsert_product_history(p, pincode)
-                else:
-                    # Trigger A: Weekly Reset (7 days passed since last alert)
-                    p_copy = dict(p)
-                    p_copy["diff_type"] = DiffType.NEW
-                    p_copy["diff_tag"] = "🗓️ WEEKLY TOP PICK"
-                    main_deals.append(p_copy)
-                    upsert_product_history(p, pincode, last_alert_date=today_date, last_alert_price=curr_price)
-
-            # 6. Core Essentials or Priority Home Brands
-            elif is_master_digest:
+            # 5. Weekly Reset: If 7+ days have elapsed since this item was last alerted
+            elif days_since_alert >= 7:
                 p_copy = dict(p)
                 p_copy["diff_type"] = DiffType.NEW
-                p_copy["diff_tag"] = "🔥 DAILY TOP DEAL"
+                p_copy["diff_tag"] = "🗓️ WEEKLY TOP PICK"
+                p_copy["diff_reason"] = "7-day refresh for active high-discount item"
                 main_deals.append(p_copy)
                 upsert_product_history(p, pincode, last_alert_date=today_date, last_alert_price=curr_price)
 
-            elif last_alert_date_str != today_date:
-                # Intra-Day: Not yet alerted today
-                p_copy = dict(p)
-                p_copy["diff_type"] = DiffType.NEW
-                p_copy["diff_tag"] = "🆕 TODAY'S DEAL"
-                main_deals.append(p_copy)
-                upsert_product_history(p, pincode, last_alert_date=today_date, last_alert_price=curr_price)
-
+            # 6. Unchanged Price within 7-Day Window -> DO NOT SHOW (Universal Anti-Repeat Filter)
             else:
-                # Stale / Already alerted today in intra-day
                 p_copy = dict(p)
                 p_copy["diff_type"] = DiffType.STALE
+                if is_home:
+                    home_deals_pool.append(p_copy)
+                elif is_pooja:
+                    pooja_deals_pool.append(p_copy)
                 stale_deals.append(p_copy)
                 upsert_product_history(p, pincode)
 

@@ -490,9 +490,9 @@ def handle_fetch_deals(
 
     if not products:
         msg = (
-            f"🛒 <b>No Deals Found</b>\n\n"
-            f"No matching deals in <b>{escape_html(cat_title)}</b> for PIN <code>{pincode}</code>.\n"
-            f"💡 Tap another category below or choose <b>🔥 All Top Deals</b> to reset."
+            f"🛒 <b>No New Price Drops Today</b>\n\n"
+            f"All deals in <b>{escape_html(cat_title)}</b> are at their previously reported prices (7-day anti-repeat filter active).\n"
+            f"💡 Tap <b>/more</b> to scan deeper pages, or check secondary categories below:"
         )
     else:
         msg = format_deals_list(
@@ -936,29 +936,25 @@ def run_scheduled_broadcast(is_master_digest: bool = False, slot_key: Optional[s
                 }
 
                 user_min_disc = u.get("min_discount", 60.0)
-                # Prioritize new price drops; if none changed, fallback to active top deals
-                candidate_pool = changed_deals if (is_master_digest or changed_deals) else products
-                user_deals = [d for d in candidate_pool if d.get("discount_pct", 0) >= user_min_disc]
+                # Only broadcast deals that are genuinely new, price-dropped, or weekly refreshed
+                user_deals = [d for d in changed_deals if d.get("discount_pct", 0) >= user_min_disc]
 
                 # Filter out user's blocked keywords (e.g. rakhi, pooja)
                 user_blocked_kws = get_blocked_keywords(u["user_id"])
                 clean_user_deals = filter_blocked_products(user_deals, user_blocked_kws)[:20]
 
                 if not clean_user_deals:
+                    print(f"[{ist_now.strftime('%I:%M:%S %p IST')}] PIN {pin}: 0 changed deals for User ID {u['user_id']}. Skipping to avoid sending repeated unchanged items.")
                     continue
 
                 if is_master_digest:
                     header_title = "JioMart Daily Deals Digest"
-                    header_sub = f"Daily Top Picks across 10 Pages (≥{user_min_disc:.0f}% OFF)"
-                    include_diff_tag = False
-                elif changed_deals:
-                    header_title = "JioMart Flash Deals"
-                    header_sub = "⚡ Fresh Price Drops & Restocks"
+                    header_sub = f"⚡ Fresh Price Drops & New Deals (≥{user_min_disc:.0f}% OFF)"
                     include_diff_tag = True
                 else:
                     header_title = "JioMart Flash Deals"
-                    header_sub = f"⚡ Top Active Deals (≥{user_min_disc:.0f}% OFF)"
-                    include_diff_tag = False
+                    header_sub = "⚡ Fresh Price Drops & Restocks"
+                    include_diff_tag = True
 
                 msg = format_deals_list(
                     products=clean_user_deals,
