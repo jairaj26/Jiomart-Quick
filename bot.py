@@ -1034,9 +1034,20 @@ def start_health_server() -> None:
                 ist_now = utc_now + datetime.timedelta(hours=5, minutes=30)
                 LAST_CRON_PING_TIME = ist_now.strftime("%d %b, %I:%M:%S %p IST")
 
+                # If index.html exists, serve the bookmarklet landing page, else fallback to "OK"
+                content_type = "text/plain; charset=utf-8"
                 body = b"OK"
+                html_path = os.path.join(os.path.dirname(__file__), "index.html")
+                if os.path.exists(html_path):
+                    try:
+                        with open(html_path, "rb") as f:
+                            body = f.read()
+                        content_type = "text/html; charset=utf-8"
+                    except Exception:
+                        pass
+
                 self.send_response(200)
-                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Type", content_type)
                 self.send_header("Content-Length", str(len(body)))
                 self.send_header("Connection", "close")
                 self.end_headers()
@@ -1045,7 +1056,7 @@ def start_health_server() -> None:
                     self.wfile.flush()
                 except Exception:
                     pass
-                print(f"[{ist_now.strftime('%I:%M:%S %p IST')}] 🌐 Keep-Alive Ping #{TOTAL_CRON_PINGS} from cron-job.org (200 OK)")
+                print(f"[{ist_now.strftime('%I:%M:%S %p IST')}] 🌐 Ping #{TOTAL_CRON_PINGS} received (200 OK)")
 
             def do_HEAD(self):
                 body = b"OK"

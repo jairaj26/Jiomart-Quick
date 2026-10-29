@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>⚡ JioMart 70%+ Deals Bookmarklet</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>">
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --card-bg: #151d2e;
+      --border: #23314d;
+      --text-main: #f1f5f9;
+      --text-muted: #94a3b8;
+      --accent-blue: #38bdf8;
+      --accent-green: #10b981;
+      --accent-purple: #818cf8;
+      --accent-red: #ef4444;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 40px 20px 80px;
+      line-height: 1.6;
+    }
+
+    .container {
+      max-width: 860px;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 32px;
+    }
+
+    /* Hero Header */
+    .hero {
+      text-align: center;
+      padding: 20px 10px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      color: var(--accent-green);
+      padding: 6px 14px;
+      border-radius: 9999px;
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 16px;
+    }
+
+    h1 {
+      font-size: 38px;
+      font-weight: 800;
+      letter-spacing: -0.8px;
+      background: linear-gradient(135deg, #ffffff 40%, var(--accent-blue) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 12px;
+    }
+
+    .hero-sub {
+      font-size: 17px;
+      color: var(--text-muted);
+      max-width: 620px;
+      margin: 0 auto;
+    }
+
+    /* Primary Card */
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 32px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+    }
+
+    .card-title {
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .card-desc {
+      color: var(--text-muted);
+      font-size: 14px;
+      margin-bottom: 24px;
+    }
+
+    /* Desktop Drag & Drop Box */
+    .drag-box {
+      background: rgba(11, 15, 25, 0.7);
+      border: 2px dashed #334155;
+      border-radius: 14px;
+      padding: 36px 20px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      transition: border-color 0.2s, background 0.2s;
+    }
+
+    .drag-box:hover {
+      border-color: var(--accent-blue);
+      background: rgba(14, 165, 233, 0.05);
+    }
+
+    .bookmarklet-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 16px 28px;
+      background: linear-gradient(135deg, #2563eb, #1d4ed8);
+      color: #ffffff;
+      font-size: 17px;
+      font-weight: 700;
+      text-decoration: none;
+      border-radius: 12px;
+      cursor: grab;
+      box-shadow: 0 4px 20px rgba(37, 99, 235, 0.45);
+      border: 1px solid #3b82f6;
+      transition: transform 0.15s, box-shadow 0.15s;
+      user-select: none;
+    }
+
+    .bookmarklet-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 24px rgba(37, 99, 235, 0.6);
+    }
+
+    .bookmarklet-btn:active {
+      cursor: grabbing;
+      transform: translateY(1px);
+    }
+
+    .drag-instruction {
+      font-size: 14px;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .drag-instruction kbd {
+      background: #1e293b;
+      border: 1px solid #475569;
+      border-radius: 5px;
+      padding: 2px 7px;
+      font-size: 12px;
+      color: #e2e8f0;
+      font-family: monospace;
+    }
+
+    /* Mobile Section */
+    .mobile-tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 20px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 12px;
+    }
+
+    .tab-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-size: 14px;
+      font-weight: 600;
+      padding: 8px 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .tab-btn.active {
+      background: #1e293b;
+      color: var(--accent-blue);
+    }
+
+    .code-box-wrap {
+      position: relative;
+      margin-bottom: 24px;
+    }
+
+    .code-box {
+      width: 100%;
+      background: #0b0f19;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      padding: 14px 16px;
+      padding-right: 110px;
+      color: #94a3b8;
+      font-family: monospace;
+      font-size: 12px;
+      overflow-x: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      user-select: all;
+    }
+
+    .copy-btn {
+      position: absolute;
+      right: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      padding: 8px 14px;
+      background: #2563eb;
+      color: #fff;
+      border: none;
+      border-radius: 7px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: background 0.15s;
+    }
+
+    .copy-btn:hover {
+      background: #1d4ed8;
+    }
+
+    .copy-btn.copied {
+      background: var(--accent-green);
+    }
+
+    /* Steps List */
+    .steps-list {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .step-item {
+      display: flex;
+      gap: 14px;
+      align-items: flex-start;
+    }
+
+    .step-num {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: var(--accent-blue);
+      font-weight: 700;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+
+    .step-content {
+      font-size: 14px;
+      color: #cbd5e1;
+    }
+
+    .step-content strong {
+      color: #f8fafc;
+    }
+
+    /* Features Grid */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 16px;
+    }
+
+    .feature-card {
+      background: #101726;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+    }
+
+    .feature-icon {
+      font-size: 24px;
+      margin-bottom: 10px;
+    }
+
+    .feature-title {
+      font-size: 15px;
+      font-weight: 700;
+      margin-bottom: 6px;
+      color: #f8fafc;
+    }
+
+    .feature-desc {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    /* Footer */
+    footer {
+      text-align: center;
+      margin-top: 40px;
+      font-size: 13px;
+      color: #64748b;
+    }
+
+    footer a {
+      color: var(--accent-blue);
+      text-decoration: none;
+    }
+
+    @media (max-width: 640px) {
+      .card {
+        padding: 20px;
+      }
+      h1 {
+        font-size: 28px;
+      }
+      .bookmarklet-btn {
+        width: 100%;
+        justify-content: center;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+
+    <!-- Hero Header -->
+    <header class="hero">
+      <div class="badge">⚡ Zero-Ad High-Discount Scraper</div>
+      <h1>JioMart 70%+ Deals Hunter</h1>
+      <p class="hero-sub">
+        A 1-click browser bookmarklet that extracts top discounted products directly from JioMart's Vertex API with real-time category filters and PIN code routing.
+      </p>
+    </header>
+
+    <!-- Desktop Section -->
+    <section class="card">
+      <div class="card-title">
+        <span>💻</span> Desktop Installation (Chrome / Edge / Firefox / Safari / Brave)
+      </div>
+      <p class="card-desc">
+        Make sure your browser's Bookmarks Bar is visible (<kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>B</kbd> on Windows, <kbd>Cmd</kbd> + <kbd>Shift</kbd> + <kbd>B</kbd> on Mac).
+      </p>
+
+      <div class="drag-box">
+        <a id="bookmarklet-link" class="bookmarklet-btn" href="#" draggable="true">
+          ⚡ JioMart 70%+ Deals
+        </a>
+        <div class="drag-instruction">
+          <span>👆 Drag and drop the blue button directly into your browser's Bookmarks Bar.</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Mobile Section -->
+    <section class="card">
+      <div class="card-title">
+        <span>📱</span> Mobile Installation (iPhone Safari & Android Chrome)
+      </div>
+      <p class="card-desc">
+        Mobile browsers don't support drag-and-drop. Copy the short loader code below and follow the quick steps for your phone:
+      </p>
+
+      <!-- Code Copy Box -->
+      <div class="code-box-wrap">
+        <div class="code-box" id="code-snippet">Loading code...</div>
+        <button class="copy-btn" id="copy-btn">
+          <span>📋</span> Copy Code
+        </button>
+      </div>
+
+      <!-- Tabs -->
+      <div class="mobile-tabs">
+        <button class="tab-btn active" id="tab-ios">🍏 iPhone / iPad (Safari)</button>
+        <button class="tab-btn" id="tab-android">🤖 Android (Chrome)</button>
+      </div>
+
+      <!-- iOS Instructions -->
+      <div id="content-ios" class="steps-list">
+        <div class="step-item">
+          <div class="step-num">1</div>
+          <div class="step-content">
+            Bookmark this page right now: Tap the <strong>Share button</strong> (<span style="font-size:16px;">⎙</span> / square with up arrow) $\rightarrow$ Tap <strong>Add Bookmark</strong> $\rightarrow$ Name it <code>⚡ JioMart Deals</code> $\rightarrow$ Tap <strong>Save</strong>.
+          </div>
+        </div>
+        <div class="step-item">
+          <div class="step-num">2</div>
+          <div class="step-content">
+            Click the <strong>Copy Code</strong> button above to copy the bookmarklet script.
+          </div>
+        </div>
+        <div class="step-item">
+          <div class="step-num">3</div>
+          <div class="step-content">
+            Open your Bookmarks (<span style="font-size:15px;">📖</span>) in Safari $\rightarrow$ Tap <strong>Edit</strong> at the bottom right $\rightarrow$ Select <strong>⚡ JioMart Deals</strong>.
+          </div>
+        </div>
+        <div class="step-item">
+          <div class="step-num">4</div>
+          <div class="step-content">
+            Delete the entire URL field and <strong>Paste</strong> the copied code $\rightarrow$ Tap <strong>Done</strong>.
+          </div>
+        </div>
+        <div class="step-item">
+          <div class="step-num">5</div>
+          <div class="step-content">
+            Open <a href="https://www.jiomart.com" target="_blank" style="color:var(--accent-blue); text-decoration:none; font-weight:600;">jiomart.com</a>, type <code>⚡ JioMart</code> into your address bar, and tap the bookmark to launch the deals drawer!
+          </div>
+        </div>
+      </div>
+
+      <!-- Android Instructions -->
+      <div id="content-android" class="steps-list" style="display: none;">
+        <div class="step-item">
+          <div class="step-num">1</div>
+          <div class="step-content">
+            Bookmark this page in Chrome: Tap the <strong>three dots</strong> (<code>⋮</code>) at the top right $\rightarrow$ Tap the <strong>Star</strong> (⭐) icon.
+          </div>
+        </div>
+        <div class="step-item">
+          <div class="step-num">2</div>
+          <div class="step-content">
+            Click the <strong>Copy Code</strong> button above to copy the bookmarklet script.
+          </div>
+        </div>
+        <div class="step-item">
+          <div class="step-num">3</div>
+          <div class="step-content">
+            Tap the 3 dots (<code>⋮</code>) $\rightarrow$ <strong>Bookmarks</strong> $\rightarrow$ Find this bookmark $\rightarrow$ Tap the 3 dots next to it $\rightarrow$ <strong>Edit</strong>.
+          </div>
+        </div>
+        <div class="step-item">
+          <div class="step-num">4</div>
+          <div class="step-content">
+            Rename it to <code>⚡ JioMart Deals</code>, clear the URL box, and <strong>Paste</strong> the copied code.
+          </div>
+        </div>
+        <div class="step-item">
+          <div class="step-num">5</div>
+          <div class="step-content">
+            Open <a href="https://www.jiomart.com" target="_blank" style="color:var(--accent-blue); text-decoration:none; font-weight:600;">jiomart.com</a>, start typing <code>⚡ JioMart</code> in Chrome's address bar, and tap the bookmark to see all top discounts!
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Key Features -->
+    <section class="card">
+      <div class="card-title">
+        <span>✨</span> What Makes This Bookmarklet Special?
+      </div>
+      <div class="features-grid">
+        <div class="feature-card">
+          <div class="feature-icon">🚀</div>
+          <div class="feature-title">Pure Vertex API</div>
+          <div class="feature-desc">Queries JioMart's internal catalog directly. No ads, tracking pixels, or bloat.</div>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">📂</div>
+          <div class="feature-title">Category Filters</div>
+          <div class="feature-desc">Instantly filter deals by Atta/Oil, Dry Fruits, Kitchenware, Personal Care, and Electronics.</div>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🎯</div>
+          <div class="feature-title">70% to 90% Off</div>
+          <div class="feature-desc">Configurable discount threshold chips (70%+, 75%+, 80%+, 85%+) to find true clearance steals.</div>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">📍</div>
+          <div class="feature-title">Quick Commerce Routing</div>
+          <div class="feature-desc">Auto-resolves warehouse stores and polygons for your exact 6-digit delivery PIN.</div>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <p>JioMart Fast Deals Hunter • Created with ❤️ • <a href="https://github.com/jairaj26/Jiomart-Quick" target="_blank">GitHub Repository</a></p>
+    </footer>
+
+  </div>
+
+  <script>
+    // Bookmarklet script hosted via jsDelivr CDN
+    const CDN_URL = "https://cdn.jsdelivr.net/gh/jairaj26/Jiomart-Quick@main/bookmarklet/jiomart_deals.js";
+    const BOOKMARKLET_CODE = `javascript:(function(){var d=document,s=d.createElement('script');s.src='${CDN_URL}?t='+Date.now();d.body.appendChild(s);})();`;
+
+    // Populate link & code box
+    const btn = document.getElementById('bookmarklet-link');
+    btn.setAttribute('href', BOOKMARKLET_CODE);
+
+    // Prevent direct execution on landing page with explanation
+    btn.addEventListener('click', function(e) {
+      e.preventDefault();
+      alert('⚡ Don\'t click this button here!\n\nDrag and drop this button into your Bookmarks Bar at the top of your browser.\n\nThen open https://www.jiomart.com and click the bookmark to see deals!');
+    });
+
+    const snippetBox = document.getElementById('code-snippet');
+    snippetBox.innerText = BOOKMARKLET_CODE;
+
+    // Copy to clipboard
+    const copyBtn = document.getElementById('copy-btn');
+    copyBtn.addEventListener('click', function() {
+      navigator.clipboard.writeText(BOOKMARKLET_CODE).then(function() {
+        copyBtn.innerHTML = '<span>✅</span> Copied!';
+        copyBtn.classList.add('copied');
+        setTimeout(() => {
+          copyBtn.innerHTML = '<span>📋</span> Copy Code';
+          copyBtn.classList.remove('copied');
+        }, 2500);
+      }).catch(function() {
+        alert('Could not copy automatically. Please select and copy the text inside the box.');
+      });
+    });
+
+    // Mobile Tabs Switching
+    const tabIos = document.getElementById('tab-ios');
+    const tabAndroid = document.getElementById('tab-android');
+    const contentIos = document.getElementById('content-ios');
+    const contentAndroid = document.getElementById('content-android');
+
+    tabIos.addEventListener('click', () => {
+      tabIos.classList.add('active');
+      tabAndroid.classList.remove('active');
+      contentIos.style.display = 'flex';
+      contentAndroid.style.display = 'none';
+    });
+
+    tabAndroid.addEventListener('click', () => {
+      tabAndroid.classList.add('active');
+      tabIos.classList.remove('active');
+      contentAndroid.style.display = 'flex';
+      contentIos.style.display = 'none';
+    });
+  </script>
+</body>
+</html>

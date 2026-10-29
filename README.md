@@ -55,6 +55,25 @@ A high-performance, ad-free JioMart deal engine and interactive Telegram Bot. It
 
 ---
 
+## ⚡ Browser Bookmarklet (One-Click Deals on JioMart)
+
+A lightweight browser bookmarklet that runs directly on [jiomart.com](https://www.jiomart.com) and displays top 70%+ deals in an interactive slide-over drawer with instant category and search filters.
+
+### Desktop Installation (Chrome / Edge / Firefox / Safari / Brave)
+1. Open [`index.html`](index.html) or visit the hosted landing page.
+2. Drag and drop the **⚡ JioMart 70%+ Deals** button into your browser's Bookmarks Bar (`Ctrl + Shift + B` / `Cmd + Shift + B`).
+3. Go to [jiomart.com](https://www.jiomart.com) and click the bookmark anytime!
+
+### Mobile Installation (iOS Safari & Android Chrome)
+1. Create a bookmark of any page in your mobile browser.
+2. Edit the bookmark, rename it to `⚡ JioMart Deals`, and replace the URL with the loader code:
+```javascript
+javascript:(function(){var d=document,s=d.createElement('script');s.src='https://cdn.jsdelivr.net/gh/jairaj26/Jiomart-Quick@main/bookmarklet/jiomart_deals.js?t='+Date.now();d.body.appendChild(s);})();
+```
+3. Open [jiomart.com](https://www.jiomart.com), type `⚡ JioMart` in your browser address bar, and tap the bookmark!
+
+---
+
 ## 🚀 24/7 Cloud Deployment (Render + cron-job.org)
 
 1. **Deploy on Render**:
