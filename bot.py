@@ -327,7 +327,7 @@ def handle_start(user_id: int, username: str, first_name: str) -> None:
             f"👋 <b>Welcome back, {escape_html(first_name)}!</b>\n\n"
             f"📍 <b>Current Location:</b> {escape_html(city)} (PIN: <code>{pincode}</code>)\n"
             f"🎯 <b>Min Discount:</b> {user.get('min_discount', 60.0):.0f}%\n"
-            f"🔔 <b>Alerts:</b> {'Active (5x Daily)' if user.get('is_active', 1) else 'Paused'}\n\n"
+            f"🔔 <b>Alerts:</b> {'Active (Hourly Radar)' if user.get('is_active', 1) else 'Paused'}\n\n"
             f"<b>Quick Actions:</b>\n"
             f"• <code>/deals</code> — Fetch latest top deals (with category buttons)\n"
             f"• <code>/more</code> — Browse next 15 deals\n"
@@ -554,7 +554,7 @@ def handle_settings(user_id: int) -> None:
         f"📮 <b>PIN Code:</b> <code>{pincode}</code>\n"
         f"📍 <b>City:</b> {escape_html(city)}\n"
         f"🎯 <b>Min Discount:</b> {min_disc:.0f}%\n"
-        f"🔔 <b>Scheduled Broadcasts:</b> {'✅ Active (5x Daily)' if is_active else '⏸️ Paused'}\n\n"
+        f"🔔 <b>Scheduled Broadcasts:</b> {'✅ Active (Hourly :02 IST)' if is_active else '⏸️ Paused'}\n\n"
         f"<b>Commands to modify:</b>\n"
         f"• <code>/pincode &lt;pin&gt;</code> — Change location\n"
         f"• <code>/mindiscount &lt;pct&gt;</code> — Change discount threshold\n"
@@ -566,9 +566,9 @@ def handle_settings(user_id: int) -> None:
 def handle_toggle_pause(user_id: int, pause: bool) -> None:
     toggle_user_active(user_id, not pause)
     if pause:
-        send_message(user_id, "⏸️ <b>Scheduled alerts paused.</b> You will not receive automated daily broadcasts. Type <code>/resume</code> to re-enable anytime.")
+        send_message(user_id, "⏸️ <b>Scheduled alerts paused.</b> You will not receive automated hourly broadcasts. Type <code>/resume</code> to re-enable anytime.")
     else:
-        send_message(user_id, "🔔 <b>Scheduled alerts resumed!</b> You will receive updates at 12:05 AM (Daily Digest) and 6 AM, 12 PM, 4 PM, 8 PM (Flash Deals).")
+        send_message(user_id, "🔔 <b>Scheduled alerts resumed!</b> You will receive hourly updates at 2 minutes past every hour (silent if no deals changed).")
 
 
 def handle_status(user_id: int) -> None:
@@ -609,7 +609,7 @@ def handle_status(user_id: int) -> None:
         f"🌐 <b>Cloud Server (Render):</b>\n"
         f"• Keep-Alive Pings: <b>{TOTAL_CRON_PINGS} received</b>\n"
         f"• Last Ping: <i>{escape_html(ping_str)}</i>\n\n"
-        f"⏰ <b>Scheduled Broadcasts:</b> {'✅ Active (5x Daily)' if is_active else '⏸️ Paused'}\n"
+        f"⏰ <b>Scheduled Broadcasts:</b> {'✅ Active (Hourly :02 past hour)' if is_active else '⏸️ Paused'}\n"
         f"• Next Trigger: <b>{next_slot}</b>\n"
         f"• Last Run Time: <i>{escape_html(bcast_str)}</i>\n"
         f"• Last Result: <i>{escape_html(LAST_BROADCAST_INFO)}</i>\n\n"
@@ -867,14 +867,10 @@ def process_telegram_update(update: Dict[str, Any]) -> None:
         send_message(user_id, guidance, reply_markup=get_categories_inline_keyboard())
 
 
-# --- Background Scheduler (5x Daily IST: 12:05am, 6am, 12pm, 4pm, 8pm) ---
+# --- Background Scheduler (Hourly Radar: 2 minutes past every hour IST) ---
 
 SCHEDULED_SLOTS = [
-    ("00:05", 0, 5, True),    # 12:05 AM IST (Daily Master Digest)
-    ("06:00", 6, 0, False),   # 06:00 AM IST (Flash Deals)
-    ("12:00", 12, 0, False),  # 12:00 PM IST (Flash Deals)
-    ("16:00", 16, 0, False),  # 04:00 PM IST (Flash Deals)
-    ("20:00", 20, 0, False),  # 08:00 PM IST (Flash Deals)
+    (f"{h:02d}:02", h, 2, (h == 0)) for h in range(24)
 ]
 
 def run_scheduled_broadcast(is_master_digest: bool = False, slot_key: Optional[str] = None) -> None:
@@ -1003,8 +999,8 @@ def scheduler_worker() -> None:
                 target_dt = ist_now.replace(hour=target_h, minute=target_m, second=0, microsecond=0)
                 diff_seconds = (ist_now - target_dt).total_seconds()
 
-                # If current time is within [0, 45 minutes] after the slot's scheduled time:
-                if 0 <= diff_seconds <= 2700:
+                # If current time is within [0, 40 minutes] after the slot's scheduled time:
+                if 0 <= diff_seconds <= 2400:
                     print(f"[{ist_now.strftime('%I:%M:%S %p IST')}] ⏰ Executing scheduled slot: {slot_name} (IST)...")
                     run_scheduled_broadcast(is_master_digest=is_master, slot_key=slot_key)
                     break
@@ -1090,7 +1086,7 @@ def start_polling() -> None:
     init_db()
     print(f"\n{Colors.GREEN}===================================================={Colors.RESET}")
     print(f"{Colors.GREEN}🤖 JioMart Deals Hunter Bot is Online!{Colors.RESET}")
-    print(f"⏰ Scheduler Active (5x Daily: 12:05am, 6am, 12pm, 4pm, 8pm IST)")
+    print(f"⏰ Scheduler Active (Hourly Radar: 2 mins past every hour IST)")
     print(f"🔘 Interactive Category Buttons & /more Pagination Enabled")
     print(f"📋 Native Telegram Menu Button Registered")
     print(f"{Colors.GREEN}===================================================={Colors.RESET}\n")

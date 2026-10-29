@@ -30,8 +30,8 @@ A high-performance, ad-free JioMart deal engine and interactive Telegram Bot. It
 5. **🧠 Smart Deal Diffing (Zero Stale Spam)**:
    - Filters out permanent/fake 85% discount items.
    - **Two-Tier Alert Cycle**:
-     - **12:05 AM IST (Daily Master Digest)**: Resets daily memory and broadcasts the full top categorized deals of the day.
-     - **6 AM, 12 PM, 4 PM, 8 PM IST (Flash Alerts)**: Only sends alerts for fresh price drops, new items, or restocks today.
+     - **12:02 AM IST (Daily Master Digest)**: Resets daily memory and broadcasts the full top categorized deals of the day.
+     - **Hourly Radar (XX:02 past every hour IST)**: Scans every hour for fresh price drops, new items, or clearance restocks (completely silent if no deals changed).
 
 ---
 
