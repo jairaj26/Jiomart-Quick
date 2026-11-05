@@ -923,10 +923,10 @@ def run_scheduled_broadcast(is_master_digest: bool = False, slot_key: Optional[s
 
             # Broadcast to each user matching their min_discount threshold
             for u in users:
-                # Cache secondary pools for this user
+                # Cache secondary pools for this user (capped to top 30 to conserve container RAM)
                 USER_DEAL_POOLS[u["user_id"]] = {
-                    "home": home_pool,
-                    "pooja": pooja_pool,
+                    "home": home_pool[:30],
+                    "pooja": pooja_pool[:30],
                     "city": city,
                     "pincode": pin
                 }
@@ -979,6 +979,13 @@ def run_scheduled_broadcast(is_master_digest: bool = False, slot_key: Optional[s
     if slot_key:
         record_slot_execution(slot_key, deals_sent=total_broadcast_sent, info=LAST_BROADCAST_INFO)
 
+    # Force garbage collection after scan cycle to release memory back to OS
+    try:
+        import gc
+        gc.collect()
+    except Exception:
+        pass
+
 
 def scheduler_worker() -> None:
     """
@@ -1020,7 +1027,17 @@ def start_health_server() -> None:
         return
 
     try:
-        from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+        from http.server import HTTPServer, BaseHTTPRequestHandler
+
+        # Cache landing HTML in memory once to eliminate file I/O on every ping
+        html_bytes = b"OK"
+        html_path = os.path.join(os.path.dirname(__file__), "index.html")
+        if os.path.exists(html_path):
+            try:
+                with open(html_path, "rb") as f:
+                    html_bytes = f.read()
+            except Exception:
+                pass
 
         class HealthHandler(BaseHTTPRequestHandler):
             def do_GET(self):
@@ -1030,17 +1047,13 @@ def start_health_server() -> None:
                 ist_now = utc_now + datetime.timedelta(hours=5, minutes=30)
                 LAST_CRON_PING_TIME = ist_now.strftime("%d %b, %I:%M:%S %p IST")
 
-                # If index.html exists, serve the bookmarklet landing page, else fallback to "OK"
-                content_type = "text/plain; charset=utf-8"
-                body = b"OK"
-                html_path = os.path.join(os.path.dirname(__file__), "index.html")
-                if os.path.exists(html_path):
-                    try:
-                        with open(html_path, "rb") as f:
-                            body = f.read()
-                        content_type = "text/html; charset=utf-8"
-                    except Exception:
-                        pass
+                # If root path requested by browser, serve cached bookmarklet page; else return lean "OK"
+                if self.path in ["/", "/index.html"]:
+                    body = html_bytes
+                    content_type = "text/html; charset=utf-8"
+                else:
+                    body = b"OK"
+                    content_type = "text/plain; charset=utf-8"
 
                 self.send_response(200)
                 self.send_header("Content-Type", content_type)
@@ -1066,8 +1079,8 @@ def start_health_server() -> None:
                 pass
 
         port = int(port_str)
-        server = ThreadingHTTPServer(("0.0.0.0", port), HealthHandler)
-        print(f"{Colors.CYAN}🌐 Multi-Threaded Health-check server listening on port {port} for Free Web Service{Colors.RESET}")
+        server = HTTPServer(("0.0.0.0", port), HealthHandler)
+        print(f"{Colors.CYAN}🌐 Lean Health-check server listening on port {port} for Free Web Service{Colors.RESET}")
         server_thread = threading.Thread(target=server.serve_forever, daemon=True)
         server_thread.start()
     except Exception as e:

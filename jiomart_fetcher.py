@@ -34,8 +34,10 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
 try:
     import requests
     HAS_REQUESTS = True
+    _SHARED_SESSION = requests.Session()
 except ImportError:
     HAS_REQUESTS = False
+    _SHARED_SESSION = None
     import urllib.request
     import urllib.error
 
@@ -82,14 +84,14 @@ def http_get(url: str, headers: Optional[Dict[str, str]] = None, timeout: int = 
     if "User-Agent" not in hdrs and "user-agent" not in hdrs:
         hdrs["User-Agent"] = DEFAULT_USER_AGENT
 
-    if HAS_REQUESTS:
+    if HAS_REQUESTS and _SHARED_SESSION is not None:
         try:
-            resp = requests.get(url, headers=hdrs, timeout=timeout)
-            try:
-                data = resp.json()
-            except Exception:
-                data = resp.text
-            return resp.status_code, data
+            with _SHARED_SESSION.get(url, headers=hdrs, timeout=timeout) as resp:
+                try:
+                    data = resp.json()
+                except Exception:
+                    data = resp.text
+                return resp.status_code, data
         except Exception as e:
             return 0, str(e)
     else:

@@ -10,16 +10,24 @@ product price history, and daily alert state.
 import os
 import sqlite3
 import datetime
-from typing import Dict, List, Any, Optional, Tuple
+from contextlib import contextmanager
+from typing import Dict, List, Any, Optional, Tuple, Iterator
 
 DB_PATH = os.environ.get("DB_PATH", "jiomart_bot.db")
 
 
-def get_db_connection() -> sqlite3.Connection:
-    """Creates a database connection with dictionary row factory."""
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+@contextmanager
+def get_db_connection() -> Iterator[sqlite3.Connection]:
+    """Creates a database connection and guarantees it is cleanly closed on exit."""
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=20.0)
     conn.row_factory = sqlite3.Row
-    return conn
+    try:
+        yield conn
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def init_db() -> None:
